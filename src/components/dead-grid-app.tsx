@@ -8,6 +8,7 @@ import {
   canRecruitSurvivor,
   createLandingGameState,
   canTreatSurvivor,
+  continueFromCombatSummary,
   DEFAULT_GAME_STATE,
   createNewGameState,
   type BuildingId,
@@ -40,11 +41,19 @@ import {
   type OutpostTask,
   type SurvivorAssignment,
 } from "@/lib/game/state";
-import { getGameSnapshot, getServerGameSnapshot, updateGameState, subscribeGameState } from "@/lib/game/store";
+import {
+  getGameSnapshot,
+  getResumableGameSnapshot,
+  getServerGameSnapshot,
+  resumeSavedGame,
+  updateGameState,
+  subscribeGameState,
+} from "@/lib/game/store";
 
 export function DeadGridApp() {
   const state = useSyncExternalStore(subscribeGameState, getGameSnapshot, getServerGameSnapshot);
-  const hasResumeSave = Boolean(state.hasStarted && state.lastSavedAt);
+  const resumableState = getResumableGameSnapshot();
+  const hasResumeSave = Boolean(resumableState?.hasStarted);
 
   const selectedMission = useMemo(
     () => state.missions.find((mission) => mission.id === state.selectedMissionId) ?? null,
@@ -88,6 +97,12 @@ export function DeadGridApp() {
     });
   };
 
+  const continueSavedGame = () => {
+    startTransition(() => {
+      resumeSavedGame();
+    });
+  };
+
   const resetSave = () => {
     startTransition(() => {
       updateGameState(() => createLandingGameState());
@@ -121,6 +136,12 @@ export function DeadGridApp() {
   const finishNightDefense = (outcome: CombatOutcome) => {
     startTransition(() => {
       updateGameState((current) => resolveCombatOutcome(current, outcome));
+    });
+  };
+
+  const continueAfterSummary = () => {
+    startTransition(() => {
+      updateGameState((current) => continueFromCombatSummary(current));
     });
   };
 
@@ -198,9 +219,13 @@ export function DeadGridApp() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(243,157,74,0.12),_transparent_36%),linear-gradient(180deg,_#09141d_0%,_#071017_54%,_#05090d_100%)] px-4 py-6 text-[var(--ink)] sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         {!state.hasStarted ? (
-          <StartScreen onNewGame={beginNewGame} />
+          <StartScreen onContinue={continueSavedGame} onNewGame={beginNewGame} resumableState={resumableState} />
         ) : state.phase === "combat" && state.combatBlueprint ? (
           <CombatPrototype blueprint={state.combatBlueprint} onResolve={finishNightDefense} />
+        ) : state.phase === "summary" && state.lastCombatSummary ? (
+          <RunSummaryScreen onContinue={continueAfterSummary} state={state} />
+        ) : state.phase === "ended" && state.lastCombatSummary ? (
+          <RunEndedScreen onNewGame={beginNewGame} onReturnToLanding={resetSave} state={state} />
         ) : (
           <>
             <header className="overflow-hidden rounded-[2rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/25 backdrop-blur">
@@ -585,10 +610,16 @@ export function DeadGridApp() {
 }
 
 function StartScreen({
+  onContinue,
   onNewGame,
+  resumableState,
 }: {
+  onContinue: () => void;
   onNewGame: () => void;
+  resumableState: DeadGridState | null;
 }) {
+  const canContinue = Boolean(resumableState?.hasStarted);
+
   return (
     <section className="grid min-h-[calc(100vh-3rem)] items-center gap-6 lg:grid-cols-[1.2fr_0.8fr]">
       <div className="rounded-[2rem] border border-white/10 bg-black/25 p-8 shadow-2xl shadow-black/30 backdrop-blur md:p-10">
@@ -602,6 +633,15 @@ function StartScreen({
           everything safely in local browser storage.
         </p>
         <div className="mt-8 flex flex-wrap gap-4">
+          {canContinue ? (
+            <button
+              className="rounded-full border border-[var(--signal)]/45 bg-[rgba(73,183,172,0.12)] px-6 py-3 font-medium uppercase tracking-[0.24em] text-[var(--signal)] transition hover:border-[var(--signal)] hover:bg-[rgba(73,183,172,0.18)]"
+              onClick={onContinue}
+              type="button"
+            >
+              Continue run
+            </button>
+          ) : null}
           <button
             className="rounded-full bg-[var(--accent)] px-6 py-3 font-medium uppercase tracking-[0.24em] text-[#1d1308] transition hover:bg-[var(--accent-strong)]"
             onClick={onNewGame}
@@ -610,9 +650,29 @@ function StartScreen({
             Start new run
           </button>
         </div>
-        <p className="mt-4 text-sm text-white/50">
-          Once a run exists, the dashboard resumes automatically from browser-local save data.
-        </p>
+        {canContinue ? (
+          <div className="mt-5 grid gap-3 rounded-[1.6rem] border border-[var(--signal)]/25 bg-[rgba(73,183,172,0.08)] p-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--signal)]">Saved run ready</p>
+            <div className="grid gap-2 text-sm text-white/72">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-white/55">Day</span>
+                <span className="font-medium text-white">{resumableState?.day}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-white/55">Threat</span>
+                <span className="font-medium text-white">{resumableState?.threatLevel}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-white/55">Saved</span>
+                <span className="font-medium text-white">{resumableState?.lastSavedLabel}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-white/50">
+            Start a new run to establish local campaign state. Once a run exists, it can be continued from this screen.
+          </p>
+        )}
       </div>
 
       <aside className="grid gap-4 rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-xl shadow-black/20">
@@ -636,6 +696,149 @@ function StartScreen({
               {item}
             </div>
           ))}
+        </div>
+      </aside>
+    </section>
+  );
+}
+
+function RunSummaryScreen({
+  onContinue,
+  state,
+}: {
+  onContinue: () => void;
+  state: DeadGridState;
+}) {
+  const summary = state.lastCombatSummary;
+
+  if (!summary) {
+    return null;
+  }
+
+  const isVictory = summary.status === "victory";
+
+  return (
+    <section className="grid min-h-[calc(100vh-3rem)] items-center gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="rounded-[2rem] border border-white/10 bg-black/25 p-8 shadow-2xl shadow-black/30 backdrop-blur md:p-10">
+        <p
+          className={`text-xs uppercase tracking-[0.38em] ${
+            isVictory ? "text-[var(--signal)]" : "text-[#ffb08b]"
+          }`}
+        >
+          {isVictory ? "Night defense complete" : "Night defense aftermath"}
+        </p>
+        <h1 className="mt-4 max-w-3xl font-display text-4xl uppercase tracking-[0.14em] text-white md:text-6xl">
+          {summary.title}
+        </h1>
+        <p className="mt-5 max-w-2xl text-base leading-8 text-white/72">{summary.detail}</p>
+        <div className="mt-8 grid gap-3 md:grid-cols-3">
+          <StatRow label="Result" value={isVictory ? "Victory" : "Defeat"} />
+          <StatRow label="Waves cleared" value={`${summary.wavesCleared}`} />
+          <StatRow label="Current day" value={`${state.day}`} />
+        </div>
+        <div className="mt-5 rounded-[1.6rem] border border-white/8 bg-black/20 p-5">
+          <p className="text-xs uppercase tracking-[0.24em] text-white/45">Resolution</p>
+          <p className="mt-3 text-lg font-medium text-white">{summary.rewardLabel}</p>
+          <p className="mt-2 text-sm text-white/60">
+            {isVictory
+              ? `The outpost rolls into day ${state.day} with refreshed routes, recruits, and field events.`
+              : "The line held long enough to report losses, triage survivors, and regroup at the shelter."}
+          </p>
+        </div>
+        <div className="mt-8 flex flex-wrap gap-4">
+          <button
+            className="rounded-full bg-[var(--signal)] px-6 py-3 font-medium uppercase tracking-[0.24em] text-[#031816] transition hover:brightness-110"
+            onClick={onContinue}
+            type="button"
+          >
+            {isVictory ? `Advance to day ${state.day}` : "Return to outpost"}
+          </button>
+        </div>
+      </div>
+
+      <aside className="grid gap-4 rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-xl shadow-black/20">
+        <p className="text-xs uppercase tracking-[0.28em] text-white/45">After-action brief</p>
+        <div className="grid gap-3">
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            Threat level now sits at <span className="font-medium text-white">{state.threatLevel}</span>.
+          </div>
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            Save state remains active. You can leave now and continue this run later from the landing screen.
+          </div>
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            The recent activity log has already been updated with the night result for later review.
+          </div>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
+function RunEndedScreen({
+  onNewGame,
+  onReturnToLanding,
+  state,
+}: {
+  onNewGame: () => void;
+  onReturnToLanding: () => void;
+  state: DeadGridState;
+}) {
+  const summary = state.lastCombatSummary;
+
+  if (!summary) {
+    return null;
+  }
+
+  return (
+    <section className="grid min-h-[calc(100vh-3rem)] items-center gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="rounded-[2rem] border border-white/10 bg-black/25 p-8 shadow-2xl shadow-black/30 backdrop-blur md:p-10">
+        <p className="text-xs uppercase tracking-[0.38em] text-[#ffb08b]">Run ended</p>
+        <h1 className="mt-4 max-w-3xl font-display text-4xl uppercase tracking-[0.14em] text-white md:text-6xl">
+          {summary.title}
+        </h1>
+        <p className="mt-5 max-w-2xl text-base leading-8 text-white/72">{summary.detail}</p>
+        <div className="mt-8 grid gap-3 md:grid-cols-3">
+          <StatRow label="Result" value="Defeat" />
+          <StatRow label="Final day" value={`${state.day}`} />
+          <StatRow label="Waves cleared" value={`${summary.wavesCleared}`} />
+        </div>
+        <div className="mt-5 rounded-[1.6rem] border border-[#ffb08b]/20 bg-[rgba(120,21,46,0.16)] p-5">
+          <p className="text-xs uppercase tracking-[0.24em] text-[#ffb08b]">Final report</p>
+          <p className="mt-3 text-lg font-medium text-white">{summary.rewardLabel}</p>
+          <p className="mt-2 text-sm text-white/60">
+            The outpost could not hold this cycle. This run should no longer appear as a resumable campaign from the landing screen.
+          </p>
+        </div>
+        <div className="mt-8 flex flex-wrap gap-4">
+          <button
+            className="rounded-full border border-white/15 px-6 py-3 font-medium uppercase tracking-[0.24em] text-white/80 transition hover:border-white/40 hover:text-white"
+            onClick={onReturnToLanding}
+            type="button"
+          >
+            Return to landing
+          </button>
+          <button
+            className="rounded-full bg-[var(--accent)] px-6 py-3 font-medium uppercase tracking-[0.24em] text-[#1d1308] transition hover:bg-[var(--accent-strong)]"
+            onClick={onNewGame}
+            type="button"
+          >
+            Start fresh run
+          </button>
+        </div>
+      </div>
+
+      <aside className="grid gap-4 rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-xl shadow-black/20">
+        <p className="text-xs uppercase tracking-[0.28em] text-white/45">After-action brief</p>
+        <div className="grid gap-3">
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            Threat level closed at <span className="font-medium text-white">{state.threatLevel}</span>.
+          </div>
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            Survivors and supply losses have been logged, but this campaign is no longer eligible for `Continue run`.
+          </div>
+          <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+            Use the landing screen to review the loss or start a fresh command loop.
+          </div>
         </div>
       </aside>
     </section>

@@ -6,6 +6,7 @@ type Listener = () => void;
 const listeners = new Set<Listener>();
 let hasBootstrappedClientState = false;
 let currentState: DeadGridState = DEFAULT_GAME_STATE;
+let resumableState: DeadGridState | null = null;
 
 export function subscribeGameState(listener: Listener) {
   listeners.add(listener);
@@ -17,7 +18,9 @@ export function subscribeGameState(listener: Listener) {
 
 export function getGameSnapshot() {
   if (!hasBootstrappedClientState) {
-    currentState = loadGameState() ?? DEFAULT_GAME_STATE;
+    const loadedState = loadGameState();
+    resumableState = loadedState?.hasStarted && loadedState.phase !== "ended" ? loadedState : null;
+    currentState = loadedState?.phase === "ended" ? loadedState : DEFAULT_GAME_STATE;
     hasBootstrappedClientState = true;
   }
 
@@ -33,10 +36,28 @@ export function updateGameState(updater: (state: DeadGridState) => DeadGridState
 
   if (nextState.hasStarted) {
     currentState = saveGameState(nextState);
+    resumableState = currentState.phase === "ended" ? null : currentState;
   } else {
     clearGameState();
+    resumableState = null;
     currentState = nextState;
   }
 
+  listeners.forEach((listener) => listener());
+}
+
+export function getResumableGameSnapshot() {
+  getGameSnapshot();
+  return resumableState;
+}
+
+export function resumeSavedGame() {
+  const savedState = getResumableGameSnapshot();
+
+  if (!savedState?.hasStarted) {
+    return;
+  }
+
+  currentState = savedState;
   listeners.forEach((listener) => listener());
 }

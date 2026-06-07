@@ -1,7 +1,7 @@
 export const GAME_VERSION = 8;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
-export type GamePhase = "outpost" | "combat";
+export type GamePhase = "outpost" | "combat" | "summary" | "ended";
 export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower";
 export type SurvivorRole = "fighter" | "scavenger" | "medic" | "builder";
 export type SurvivorAssignment = BuildingId | "defense" | null;
@@ -1010,7 +1010,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
   let nextState: DeadGridState = {
     ...state,
     day: nextDay,
-    phase: "outpost",
+    phase: victory ? "summary" : "ended",
     threatLevel: victory ? (nextDay >= 4 ? "Escalating" : "Watching") : "Breached",
     combatBlueprint: null,
     survivors: recoverSurvivorsAfterNight(state.survivors, victory, stats.healingBonus),
@@ -1068,6 +1068,17 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
       ),
       ...nextState.activityLog.slice(0, 5),
     ],
+  });
+}
+
+export function continueFromCombatSummary(state: DeadGridState): DeadGridState {
+  if (state.phase !== "summary") {
+    return state;
+  }
+
+  return normalizeState({
+    ...state,
+    phase: "outpost",
   });
 }
 
