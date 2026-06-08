@@ -148,3 +148,73 @@ test("worn mission crews can still launch but are shown as degraded", async ({ p
   await fastEntryButton.click();
   await expect(page.getByText(/mission resolved: market sweep/i)).toBeVisible();
 });
+
+test("event follow-up consequences persist across reload and remain visible", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await page.getByRole("button", { name: /transit flare/i }).click();
+  await page.getByRole("button", { name: /investigate/i }).click();
+
+  await expect(page.getByText(/pending consequences/i)).toBeVisible();
+  await expect(page.getByText(/noise trail coming in/i).first()).toBeVisible();
+  await expect(page.getByText(/source: transit flare/i)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: /continue run/i })).toBeVisible();
+
+  await page.getByRole("button", { name: /continue run/i }).click();
+  await expect(page.getByText(/noise trail coming in/i).first()).toBeVisible();
+  await expect(page.getByText(/day 2/i)).toBeVisible();
+});
+
+test("task follow-up consequences persist across reload and remain visible", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await page.getByRole("button", { name: /prep field triage/i }).click();
+  await page.getByRole("button", { name: /complete task/i }).click();
+
+  await expect(page.getByText(/prepared triage buffer/i).first()).toBeVisible();
+  await expect(page.getByText(/source: prep field triage/i)).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+  await expect(page.getByText(/prepared triage buffer/i).first()).toBeVisible();
+});
+
+test("resolved follow-up consequences clear from pending and remain in activity history", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.day = 2;
+    parsed.phase = "outpost";
+    parsed.pendingConsequences = [];
+    parsed.activityLog = [
+      {
+        id: "resolved-pending-log",
+        title: "Consequence resolved: Quiet ration window",
+        detail: "Transit flare landed on day 2. Holding position leaves a small support window that can pay out supplies tomorrow.",
+        timestamp: "07:20",
+      },
+      ...parsed.activityLog,
+    ];
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/no queued follow-up pressure/i)).toBeVisible();
+  await expect(page.getByText(/consequence resolved: quiet ration window/i)).toBeVisible();
+});

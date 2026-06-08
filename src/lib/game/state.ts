@@ -1,4 +1,4 @@
-export const GAME_VERSION = 8;
+export const GAME_VERSION = 9;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -93,6 +93,19 @@ export type DayEvent = {
   risk: string;
   window: string;
   choices: [DayEventChoice, DayEventChoice];
+};
+
+export type PendingConsequence = {
+  id: string;
+  sourceType: "event" | "task";
+  sourceTitle: string;
+  label: string;
+  detail: string;
+  triggerDay: number;
+  timing: "next_day";
+  effectType: "threat_shift" | "resource_bundle";
+  threatDelta?: number;
+  reward?: Partial<Record<ResourceId, number>>;
 };
 
 export type ActivityLogEntry = {
@@ -197,6 +210,7 @@ export type DeadGridState = {
   dayEvents: DayEvent[];
   missions: Mission[];
   tasks: OutpostTask[];
+  pendingConsequences: PendingConsequence[];
   activityLog: ActivityLogEntry[];
   objectives: Objective[];
   combatBlueprint: CombatBlueprint | null;
@@ -496,6 +510,7 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
   dayEvents: generateDayEvents(1),
   missions: generateMissionSet(1),
   tasks: INITIAL_TASKS,
+  pendingConsequences: [],
   activityLog: INITIAL_ACTIVITY_LOG,
   objectives: INITIAL_OBJECTIVES,
   combatBlueprint: null,
@@ -525,6 +540,7 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
     dayEvents: state.dayEvents ?? structuredClone(DEFAULT_GAME_STATE.dayEvents),
     missions: state.missions ?? structuredClone(DEFAULT_GAME_STATE.missions),
     tasks: state.tasks ?? structuredClone(DEFAULT_GAME_STATE.tasks),
+    pendingConsequences: state.pendingConsequences ?? [],
     activityLog: state.activityLog ?? structuredClone(DEFAULT_GAME_STATE.activityLog),
     objectives: state.objectives ?? structuredClone(DEFAULT_GAME_STATE.objectives),
     combatBlueprint: state.combatBlueprint ?? null,
@@ -756,14 +772,21 @@ export function resolveOutpostTask(state: DeadGridState): DeadGridState {
     return state;
   }
 
+  const pendingConsequence = createPendingTaskConsequence(task, state.day);
+
   return withAppliedReward(
     {
       ...state,
       tasks: rotateTask(state.tasks, task.id),
+      pendingConsequences: pendingConsequence
+        ? [pendingConsequence, ...state.pendingConsequences].slice(0, 4)
+        : state.pendingConsequences,
       activityLog: [
         createLogEntry(
           `Task completed: ${task.title}`,
-          `${task.owner} finished the task and secured ${task.rewardLabel.toLowerCase()}.`,
+          pendingConsequence
+            ? `${task.owner} finished the task and secured ${task.rewardLabel.toLowerCase()}. Follow-up queued: ${pendingConsequence.label.toLowerCase()}.`
+            : `${task.owner} finished the task and secured ${task.rewardLabel.toLowerCase()}.`,
         ),
         ...state.activityLog.slice(0, 5),
       ],
@@ -786,15 +809,21 @@ export function resolveDayEvent(
   }
 
   const nextEvents = state.dayEvents.filter((entry) => entry.id !== eventId);
+  const pendingConsequence = createPendingEventConsequence(event, choice, state.day);
   let nextState = withAppliedReward(
     {
       ...state,
       dayEvents: nextEvents,
+      pendingConsequences: pendingConsequence
+        ? [pendingConsequence, ...state.pendingConsequences].slice(0, 4)
+        : state.pendingConsequences,
       selectedEventId: nextEvents[0]?.id ?? "",
       activityLog: [
         createLogEntry(
           `Event resolved: ${event.title}`,
-          `${choice.label} chosen. ${choice.effectLabel}`,
+          pendingConsequence
+            ? `${choice.label} chosen. ${choice.effectLabel} Follow-up queued: ${pendingConsequence.label.toLowerCase()}.`
+            : `${choice.label} chosen. ${choice.effectLabel}`,
         ),
         ...state.activityLog.slice(0, 5),
       ],
@@ -1021,12 +1050,17 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
   const victory = outcome.status === "victory";
   const stats = getDerivedStats(state.buildings, state.survivors);
   const nextDay = victory ? state.day + 1 : state.day;
+  const pendingResolution = victory
+    ? resolvePendingConsequencesForDay(state.pendingConsequences, nextDay)
+    : { remaining: state.pendingConsequences, logs: [], reward: {}, threatDelta: 0 };
 
   let nextState: DeadGridState = {
     ...state,
     day: nextDay,
     phase: victory ? "summary" : "ended",
-    threatLevel: victory ? getThreatLevelForDay(nextDay) : "Breached",
+    threatLevel: victory
+      ? shiftThreatLevel(getThreatLevelForDay(nextDay), pendingResolution.threatDelta)
+      : "Breached",
     combatBlueprint: null,
     survivors: recoverSurvivorsAfterNight(state.survivors, victory, stats.healingBonus),
     recruitPool: victory ? generateRecruitPool(nextDay, state.survivors.length) : state.recruitPool,
@@ -1037,6 +1071,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
     selectedEventId: victory ? generateDayEvents(nextDay)[0]?.id ?? state.selectedEventId : state.selectedEventId,
     missions: victory ? generateMissionSet(nextDay) : state.missions,
     selectedMissionId: victory ? generateMissionSet(nextDay)[0].id : state.selectedMissionId,
+    pendingConsequences: pendingResolution.remaining,
   };
 
   if (victory) {
@@ -1044,6 +1079,9 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
       applyWorkshopBonus: true,
       addHealingBonus: true,
     });
+    if (hasAnyRewardValue(pendingResolution.reward)) {
+      nextState = withAppliedReward(nextState, pendingResolution.reward, "Queued consequence");
+    }
   } else {
     nextState = withAppliedReward(nextState, { food: -2, ammo: -3 }, "Night defense loss");
 
@@ -1075,6 +1113,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
       wavesCleared: outcome.wavesCleared,
     },
     activityLog: [
+      ...pendingResolution.logs,
       createLogEntry(
         victory ? "Night defense won" : "Night defense lost",
         victory
@@ -1698,6 +1737,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
   const recruitPool = state.recruitPool ?? [];
   const dayEvents = state.dayEvents ?? [];
+  const pendingConsequences = state.pendingConsequences ?? [];
   const treatmentSlots = getInfirmaryTreatmentSlotCount(state.buildings);
   const selectedRecruitId =
     recruitPool.some((candidate) => candidate.id === state.selectedRecruitId)
@@ -1726,6 +1766,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
     threatLevel: getThreatLevelForState(state),
     recruitPool,
     dayEvents,
+    pendingConsequences,
     selectedMissionTeamIds,
     selectedTreatmentIds,
     selectedRecruitId,
@@ -2056,6 +2097,161 @@ function rotateTask(tasks: OutpostTask[], resolvedId: string): OutpostTask[] {
 
     return task;
   });
+}
+
+function createPendingEventConsequence(
+  event: DayEvent,
+  choice: DayEventChoice,
+  day: number,
+): PendingConsequence | null {
+  const isRiskyChoice = choice.id.endsWith("choice-a");
+  const triggerDay = day + 1;
+
+  if (event.title === "Transit flare" && isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Noise trail coming in",
+      detail: "Tomorrow's route board will inherit extra pursuit pressure from the flare response.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: 1,
+    };
+  }
+
+  if (event.title === "Transit flare" && !isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Quiet ration window",
+      detail: "Holding position leaves a small support window that can pay out supplies tomorrow.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { food: 2, ammo: 1 },
+    };
+  }
+
+  if (isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Tomorrow pressure spike",
+      detail: "The aggressive field call leaves a delayed pressure ripple for the next day.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: 1,
+    };
+  }
+
+  return {
+    id: `pending-event-${event.id}`,
+    sourceType: "event",
+    sourceTitle: event.title,
+    label: "Tomorrow support package",
+    detail: "The safer call creates a modest follow-up supply window on the next day.",
+    triggerDay,
+    timing: "next_day",
+    effectType: "resource_bundle",
+    reward: { food: 2 },
+  };
+}
+
+function createPendingTaskConsequence(task: OutpostTask, day: number): PendingConsequence | null {
+  const triggerDay = day + 1;
+
+  if (task.id === "ammo-tally") {
+    return {
+      id: `pending-task-${task.id}-${day}`,
+      sourceType: "task",
+      sourceTitle: task.title,
+      label: "Locked ammo reserve",
+      detail: "The locker audit prepares extra magazines for tomorrow's line.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { ammo: 2 },
+    };
+  }
+
+  if (task.id === "med-triage") {
+    return {
+      id: `pending-task-${task.id}-${day}`,
+      sourceType: "task",
+      sourceTitle: task.title,
+      label: "Prepared triage buffer",
+      detail: "Field triage prep reduces tomorrow's threat carry by one step if the line holds.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: -1,
+    };
+  }
+
+  if (task.id === "ration-sort") {
+    return {
+      id: `pending-task-${task.id}-${day}`,
+      sourceType: "task",
+      sourceTitle: task.title,
+      label: "Stabilized ration crates",
+      detail: "Sorted rations create a small next-day food cushion.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { food: 2 },
+    };
+  }
+
+  return null;
+}
+
+function resolvePendingConsequencesForDay(
+  consequences: PendingConsequence[],
+  nextDay: number,
+) {
+  const due = consequences.filter((consequence) => consequence.triggerDay <= nextDay);
+  const remaining = consequences.filter((consequence) => consequence.triggerDay > nextDay);
+  const reward = due.reduce<Partial<Record<ResourceId, number>>>((sum, consequence) => {
+    if (consequence.effectType !== "resource_bundle" || !consequence.reward) {
+      return sum;
+    }
+
+    for (const [key, value] of Object.entries(consequence.reward) as [ResourceId, number][]) {
+      sum[key] = (sum[key] ?? 0) + value;
+    }
+
+    return sum;
+  }, {});
+  const threatDelta = due.reduce((sum, consequence) => sum + (consequence.threatDelta ?? 0), 0);
+  const logs = due.map((consequence) =>
+    createLogEntry(
+      `Consequence resolved: ${consequence.label}`,
+      `${consequence.sourceTitle} landed on day ${nextDay}. ${consequence.detail}`,
+    ),
+  );
+
+  return {
+    remaining,
+    logs,
+    reward,
+    threatDelta,
+  };
+}
+
+function shiftThreatLevel(base: ThreatLevel, delta: number): ThreatLevel {
+  if (base === "Breached" || delta === 0) {
+    return base;
+  }
+
+  const safeLevels: ThreatLevel[] = ["Watching", "Escalating", "Critical"];
+  const currentIndex = safeLevels.indexOf(base);
+  const nextIndex = Math.max(0, Math.min(safeLevels.length - 1, currentIndex + delta));
+  return safeLevels[nextIndex];
 }
 
 function createLogEntry(title: string, detail: string): ActivityLogEntry {

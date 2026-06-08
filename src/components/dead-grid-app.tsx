@@ -565,6 +565,38 @@ export function DeadGridApp() {
                 </Panel>
 
                 <Panel
+                  eyebrow="Forecast"
+                  title="Pending consequences"
+                  description="These are queued effects from recent choices. They do not land yet, but the run is already carrying them forward into the next day."
+                >
+                  <div className="grid gap-3">
+                    {state.pendingConsequences.length > 0 ? (
+                      state.pendingConsequences.map((consequence) => (
+                        <article
+                          className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4"
+                          key={consequence.id}
+                        >
+                          <div className="flex items-center justify-between gap-4">
+                            <p className="font-medium text-white">{consequence.label}</p>
+                            <span className="text-xs uppercase tracking-[0.22em] text-white/45">
+                              Day {consequence.triggerDay}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-white/65">{consequence.detail}</p>
+                          <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--accent-soft)]">
+                            Source: {consequence.sourceTitle}
+                          </p>
+                        </article>
+                      ))
+                    ) : (
+                      <div className="rounded-[1.6rem] border border-white/8 bg-white/[0.03] p-5 text-sm text-white/65">
+                        No queued follow-up pressure. Current event and task decisions are not carrying extra next-day effects yet.
+                      </div>
+                    )}
+                  </div>
+                </Panel>
+
+                <Panel
                   eyebrow="Discipline"
                   title="Outpost task queue"
                   description="Tasks are your low-risk momentum tool. Use them when the shelter needs a small push without spending a full route."
