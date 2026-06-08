@@ -21,6 +21,9 @@ import {
   getSelectedRecruitCandidate,
   getSelectedBuilding,
   getSelectedBuildingSurvivors,
+  getThreatDefensePressureLabel,
+  getThreatEffectSummary,
+  getThreatMissionPressureLabel,
   getTraitEffectLabel,
   getTreatmentSlotCount,
   getTreatmentCost,
@@ -90,6 +93,12 @@ export function DeadGridApp() {
   const canRecruitSelectedSurvivor = useMemo(() => canRecruitSurvivor(state), [state]);
   const selectedEvent = useMemo(() => getSelectedDayEvent(state), [state]);
   const treatmentSlots = useMemo(() => getTreatmentSlotCount(state), [state]);
+  const threatSummary = useMemo(() => getThreatEffectSummary(state.threatLevel), [state.threatLevel]);
+  const threatDefensePressure = useMemo(
+    () => getThreatDefensePressureLabel(state.threatLevel),
+    [state.threatLevel],
+  );
+  const defenseRosterPressure = useMemo(() => describeDefenseRosterPressure(state), [state]);
 
   const beginNewGame = () => {
     startTransition(() => {
@@ -247,6 +256,9 @@ export function DeadGridApp() {
                     <Badge label="Threat" value={state.threatLevel} />
                     <Badge label="Save" value={state.lastSavedLabel} />
                   </div>
+                  <div className="mt-4 max-w-3xl rounded-[1.4rem] border border-white/10 bg-black/20 px-4 py-4 text-sm text-white/68">
+                    <span className="font-medium text-white">{threatDefensePressure}.</span> {threatSummary}
+                  </div>
                 </div>
 
                 <div className="grid gap-4 rounded-[1.5rem] border border-white/10 bg-white/5 p-4">
@@ -359,7 +371,7 @@ export function DeadGridApp() {
                 <Panel
                   eyebrow="Operations"
                   title="Mission board"
-                  description="Choose one route, commit a team, then decide how hard to press it. Rewards and costs are visible before you send anyone out."
+                  description="Choose one route, commit a team, then decide how hard to press it. Rewards and costs are visible before you send anyone out, but route pressure now tracks the current threat tier."
                 >
                   <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
                     <div className="grid gap-3">
@@ -384,7 +396,7 @@ export function DeadGridApp() {
                 <Panel
                   eyebrow="Nightfall"
                   title="Defense gate"
-                  description="This is the handoff from day command into the live defense phase. The briefing below shows what tonight can pay out and how strong the line looks."
+                  description="This is the handoff from day command into the live defense phase. The briefing below shows what tonight can pay out, how strong the line looks, and how much current threat pressure is bending the perimeter."
                 >
                   <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
                     <div className="rounded-[1.6rem] border border-white/8 bg-white/[0.03] p-5">
@@ -409,7 +421,11 @@ export function DeadGridApp() {
                         </div>
                         <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
                           <span>Hostile mix</span>
-                          <span className="font-medium text-white">{describeDayEnemyPressure(state.day)}</span>
+                          <span className="font-medium text-white">{describeDayEnemyPressure(state.day, state.threatLevel)}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
+                          <span>Threat effect</span>
+                          <span className="font-medium text-white">{threatDefensePressure}</span>
                         </div>
                         <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
                           <span>Upgrade impact</span>
@@ -418,12 +434,12 @@ export function DeadGridApp() {
                           </span>
                         </div>
                         <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
-                          <span>Balance profile</span>
-                          <span className="font-medium text-white">Smooth growth / lower spike</span>
-                        </div>
-                        <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
                           <span>Assigned defenders</span>
                           <span className="font-medium text-white">{buildingStats.assignedDefense}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
+                          <span>Roster quality</span>
+                          <span className="font-medium text-white">{defenseRosterPressure}</span>
                         </div>
                       </div>
                     </div>
@@ -1438,7 +1454,10 @@ function MissionSelectionPanel({
 
   const selectedTeam = state.survivors.filter((survivor) => state.selectedMissionTeamIds.includes(survivor.id));
   const readyTeam = selectedTeam.filter((survivor) => survivor.status === "ready");
+  const fatiguedTeam = selectedTeam.filter((survivor) => survivor.status === "fatigued");
   const missionAvailable = missionHasReward(mission);
+  const threatPressure = getThreatMissionPressureLabel(state.threatLevel);
+  const teamPressure = describeMissionTeamPressure(selectedTeam);
 
   return (
     <div className="rounded-[1.6rem] border border-white/10 bg-black/25 p-5">
@@ -1459,6 +1478,10 @@ function MissionSelectionPanel({
           <dd className="text-sm font-medium text-white">{mission.enemyHint}</dd>
         </div>
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+          <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Threat pressure</dt>
+          <dd className="text-sm font-medium text-white">{threatPressure}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
           <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Window</dt>
           <dd className="text-sm font-medium text-white">{mission.duration}</dd>
         </div>
@@ -1469,17 +1492,28 @@ function MissionSelectionPanel({
               ? "Route already exhausted"
               : readyTeam.length > 0
               ? `${readyTeam.length} ready / ${selectedTeam.length} selected`
-              : "No ready team selected"}
+              : selectedTeam.length > 0
+                ? `${selectedTeam.length} worn / 0 ready`
+                : "No team selected"}
           </dd>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+          <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Crew pressure</dt>
+          <dd className="text-sm font-medium text-white">{teamPressure}</dd>
         </div>
       </dl>
       <div className="mt-5 grid gap-3">
         <p className="text-xs uppercase tracking-[0.24em] text-white/45">Mission team</p>
         <p className="text-sm text-white/55">
           {missionAvailable
-            ? "Pick up to two available survivors. Units locked to Night Defense or marked injured cannot leave the outpost for day operations."
+            ? "Pick up to two available survivors. Units locked to Night Defense or marked injured cannot leave the outpost for day operations. Fatigued survivors can still go, but they return less value and add operating strain."
             : "This route has already been cleared for the current day and cannot be resolved again."}
         </p>
+        {fatiguedTeam.length > 0 ? (
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
+            Worn crew selected: {fatiguedTeam.map((survivor) => survivor.name).join(", ")}. Route costs and fallout will hit harder.
+          </div>
+        ) : null}
         <div className="grid gap-2">
           {state.survivors.map((survivor) => {
             const selected = state.selectedMissionTeamIds.includes(survivor.id);
@@ -1542,8 +1576,9 @@ function MissionApproachButton({
 }) {
   const outcome = getMissionApproachOutcome(state, mission, approach);
   const selectedTeam = state.survivors.filter((survivor) => state.selectedMissionTeamIds.includes(survivor.id));
+  const operationalTeam = selectedTeam.filter((survivor) => survivor.status !== "injured");
   const readyTeam = selectedTeam.filter((survivor) => survivor.status === "ready");
-  const canResolve = readyTeam.length > 0 && missionHasReward(mission);
+  const canResolve = operationalTeam.length > 0 && missionHasReward(mission);
 
   return (
     <button
@@ -1567,8 +1602,10 @@ function MissionApproachButton({
       ) : null}
       <p className="mt-2 text-xs uppercase tracking-[0.18em] text-white/45">
         {canResolve
-          ? `Team ready: ${readyTeam.map((survivor) => survivor.name).join(", ")}`
-          : "Select at least one ready survivor to launch this route"}
+          ? readyTeam.length > 0
+            ? `Fresh crew: ${readyTeam.map((survivor) => survivor.name).join(", ")}`
+            : `Launching with worn crew only: ${operationalTeam.map((survivor) => survivor.name).join(", ")}`
+          : "Select at least one non-injured survivor to launch this route"}
       </p>
     </button>
   );
@@ -1666,7 +1703,58 @@ function formatMissionKind(kind?: Mission["kind"]) {
   }
 }
 
-function describeDayEnemyPressure(day: number) {
+function describeMissionTeamPressure(team: DeadGridState["survivors"]) {
+  if (team.length === 0) {
+    return "No route crew";
+  }
+
+  const readyCount = team.filter((survivor) => survivor.status === "ready").length;
+  const fatiguedCount = team.filter((survivor) => survivor.status === "fatigued").length;
+
+  if (fatiguedCount === 0) {
+    return "Fresh route crew";
+  }
+
+  if (readyCount === 0) {
+    return "Fully worn route crew";
+  }
+
+  return `${fatiguedCount} worn / ${readyCount} fresh`;
+}
+
+function describeDefenseRosterPressure(state: DeadGridState) {
+  const frontline = state.survivors.filter(
+    (survivor) => survivor.assignment === "defense" || survivor.assignment === "watchtower",
+  );
+
+  if (frontline.length === 0) {
+    return "No frontline crew";
+  }
+
+  const readyCount = frontline.filter((survivor) => survivor.status === "ready").length;
+  const fatiguedCount = frontline.filter((survivor) => survivor.status === "fatigued").length;
+  const injuredCount = frontline.filter((survivor) => survivor.status === "injured").length;
+
+  if (injuredCount > 0) {
+    return `${injuredCount} injured on the line`;
+  }
+
+  if (fatiguedCount > 0 && readyCount === 0) {
+    return "Frontline fully worn";
+  }
+
+  if (fatiguedCount > 0) {
+    return `${fatiguedCount} worn / ${readyCount} fresh`;
+  }
+
+  return "Frontline fresh";
+}
+
+function describeDayEnemyPressure(day: number, threatLevel: DeadGridState["threatLevel"]) {
+  if (threatLevel === "Critical") {
+    return "Brutes / runners / blackout lanes";
+  }
+
   if (day <= 1) {
     return "Walkers / runners";
   }

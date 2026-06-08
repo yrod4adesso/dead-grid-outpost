@@ -62,3 +62,89 @@ test("returning from a terminal run clears resume eligibility across reload", as
   await expect(page.getByRole("button", { name: /continue run/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /start new run/i })).toBeVisible();
 });
+
+test("critical threat persists across reload and is surfaced in route and defense planning", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.day = 5;
+    parsed.threatLevel = "Critical";
+    parsed.lastSavedLabel = "Autosaved // day 5";
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+
+  await expect(page.getByRole("button", { name: /continue run/i })).toBeVisible();
+  await expect(page.getByText(/^critical$/i)).toBeVisible();
+
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/perimeter strain is severe/i).first()).toBeVisible();
+  await page.getByRole("button", { name: /market sweep/i }).click();
+  await expect(page.getByText(/route pressure: critical/i)).toBeVisible();
+});
+
+test("mission wear persists across reload and remains visible in survivor cards", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await page.getByRole("button", { name: /market sweep/i }).click();
+  await page.getByRole("button", { name: /fast entry/i }).click();
+
+  await expect(page.getByText(/mission resolved: market sweep/i)).toBeVisible();
+  await expect(page.getByText(/injured/i).first()).toBeVisible();
+  await expect(page.getByText(/fatigued/i).first()).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/injured/i).first()).toBeVisible();
+  await expect(page.getByText(/fatigued/i).first()).toBeVisible();
+});
+
+test("worn mission crews can still launch but are shown as degraded", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.selectedMissionTeamIds = ["survivor-vale", "survivor-rune"];
+    parsed.survivors = parsed.survivors.map((survivor: { id: string; status: string }) =>
+      survivor.id === "survivor-vale" || survivor.id === "survivor-rune"
+        ? { ...survivor, status: "fatigued" }
+        : survivor,
+    );
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await page.getByRole("button", { name: /market sweep/i }).click();
+  await expect(page.getByText(/2 worn \/ 0 ready/i)).toBeVisible();
+  await expect(page.getByText(/fully worn route crew/i)).toBeVisible();
+
+  const fastEntryButton = page.getByRole("button", { name: /fast entry/i });
+  await expect(fastEntryButton).toBeEnabled();
+  await fastEntryButton.click();
+  await expect(page.getByText(/mission resolved: market sweep/i)).toBeVisible();
+});

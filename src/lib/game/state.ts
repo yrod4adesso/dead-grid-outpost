@@ -2,6 +2,7 @@ export const GAME_VERSION = 8;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
+export type ThreatLevel = "Watching" | "Escalating" | "Critical" | "Breached";
 export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower";
 export type SurvivorRole = "fighter" | "scavenger" | "medic" | "builder";
 export type SurvivorAssignment = BuildingId | "defense" | null;
@@ -166,6 +167,8 @@ export type BuildingStats = {
   activePerkLabels: string[];
 };
 
+const THREAT_LEVELS: ThreatLevel[] = ["Watching", "Escalating", "Critical", "Breached"];
+
 const MISSION_DIFFICULTY_MULTIPLIER: Record<Mission["difficulty"], number> = {
   low: 0.95,
   medium: 1.08,
@@ -178,7 +181,7 @@ export type DeadGridState = {
   phase: GamePhase;
   outpostName: string;
   day: number;
-  threatLevel: string;
+  threatLevel: ThreatLevel;
   selectedMissionId: string;
   selectedMissionTeamIds: string[];
   selectedTreatmentIds: string[];
@@ -615,7 +618,7 @@ export function resolveMissionApproach(
     (survivor) =>
       state.selectedMissionTeamIds.includes(survivor.id) &&
       survivor.assignment !== "defense" &&
-      survivor.status === "ready",
+      survivor.status !== "injured",
   );
 
   if (availableMissionTeam.length === 0) {
@@ -672,6 +675,7 @@ export function getMissionApproachOutcome(
   const missionTeam = state.survivors.filter((survivor) =>
     state.selectedMissionTeamIds.includes(survivor.id),
   );
+  const fatiguedMissionTeam = missionTeam.filter((survivor) => survivor.status === "fatigued");
   const activeMissionTeam = missionTeam.filter(
     (survivor) => survivor.status === "ready" && survivor.assignment !== "defense",
   );
@@ -723,6 +727,16 @@ export function getMissionApproachOutcome(
   if (mission.kind === "breach" && activeMissionTeam.some((survivor) => survivor.trait === "Frame welder")) {
     reward.scrap = (reward.scrap ?? 0) + 1;
     bonuses.push("Frame welder added +1 scrap");
+  }
+
+  if (fatiguedMissionTeam.length > 0) {
+    if (approach.label === "Fast entry") {
+      cost.ammo = (cost.ammo ?? 0) + 1;
+      bonuses.push(`Fatigued route crew added +1 ammo strain`);
+    } else {
+      cost.food = (cost.food ?? 0) + 1;
+      bonuses.push(`Fatigued route crew added +1 food strain`);
+    }
   }
 
   return {
@@ -960,7 +974,8 @@ export function assignSurvivor(
 
 export function startNightDefense(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
-  const waveModifier = getWaveModifierForDay(state.day);
+  const threatLevel = getThreatLevelForState(state);
+  const waveModifier = getWaveModifierForThreat(threatLevel, state.day);
 
   return {
     ...state,
@@ -979,10 +994,10 @@ export function startNightDefense(state: DeadGridState): DeadGridState {
       flarePrimaryDuration: stats.flarePrimaryDuration,
       flareSecondaryDuration: stats.flareSecondaryDuration,
       reward: getNightRewardPreview(state),
-      enemyTypes: getEnemyTypesForDay(state.day),
+      enemyTypes: getEnemyTypesForThreat(threatLevel, state.day),
       waveModifier,
-      waveModifierLabel: getWaveModifierLabel(waveModifier),
-      lanePressureLabel: getLanePressureLabel(waveModifier),
+      waveModifierLabel: getWaveModifierLabel(waveModifier, threatLevel),
+      lanePressureLabel: getLanePressureLabel(waveModifier, threatLevel),
       activePerkLabels: stats.activePerkLabels,
       supportCharges: {
         medkit: 1 + Math.min(1, stats.healingBonus),
@@ -1011,7 +1026,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
     ...state,
     day: nextDay,
     phase: victory ? "summary" : "ended",
-    threatLevel: victory ? (nextDay >= 4 ? "Escalating" : "Watching") : "Breached",
+    threatLevel: victory ? getThreatLevelForDay(nextDay) : "Breached",
     combatBlueprint: null,
     survivors: recoverSurvivorsAfterNight(state.survivors, victory, stats.healingBonus),
     recruitPool: victory ? generateRecruitPool(nextDay, state.survivors.length) : state.recruitPool,
@@ -1188,88 +1203,93 @@ export function getDerivedStats(
   buildings: BuildingState[],
   survivors: SurvivorState[] = [],
 ): BuildingStats {
-  const activeSurvivors = survivors.filter((survivor) => survivor.status === "ready");
+  const readySurvivors = survivors.filter((survivor) => survivor.status === "ready");
+  const operationalSurvivors = survivors.filter((survivor) => survivor.status !== "injured");
   const storageLevel = getBuildingLevel(buildings, "storage");
   const watchtowerLevel = getBuildingLevel(buildings, "watchtower");
   const infirmaryLevel = getBuildingLevel(buildings, "infirmary");
   const workshopLevel = getBuildingLevel(buildings, "workshop");
-  const assignedDefense = activeSurvivors.filter((survivor) => survivor.assignment === "defense").length;
+  const weightedAssignmentCount = (assignment: SurvivorAssignment) =>
+    operationalSurvivors
+      .filter((survivor) => survivor.assignment === assignment)
+      .reduce((sum, survivor) => sum + getSurvivorOperationalWeight(survivor.status), 0);
+  const assignedDefense = weightedAssignmentCount("defense");
 
-  const fighterBonus = activeSurvivors.some(
+  const fighterBonus = readySurvivors.some(
     (survivor) => survivor.role === "fighter" && survivor.assignment === "defense",
   )
     ? 0.1
     : 0;
-  const scavengerBonus = activeSurvivors.some(
+  const scavengerBonus = readySurvivors.some(
     (survivor) => survivor.role === "scavenger" && survivor.assignment === "workshop",
   )
     ? 0.1
     : 0;
-  const medicBonus = activeSurvivors.some(
+  const medicBonus = readySurvivors.some(
     (survivor) => survivor.role === "medic" && survivor.assignment === "infirmary",
   )
     ? 1
     : 0;
-  const builderStorageBonus = activeSurvivors.some(
+  const builderStorageBonus = readySurvivors.some(
     (survivor) => survivor.role === "builder" && survivor.assignment === "storage",
   )
     ? 10
     : 0;
-  const builderTowerBonus = activeSurvivors.some(
+  const builderTowerBonus = readySurvivors.some(
     (survivor) => survivor.role === "builder" && survivor.assignment === "watchtower",
   )
     ? 0.06
     : 0;
-  const traitStorageBonus = activeSurvivors
+  const traitStorageBonus = readySurvivors
     .filter((survivor) => survivor.assignment === "storage")
     .reduce((sum, survivor) => sum + getTraitStorageBonus(survivor.trait), 0);
-  const traitDamageBonus = activeSurvivors
+  const traitDamageBonus = readySurvivors
     .filter((survivor) => survivor.assignment === "defense" || survivor.assignment === "watchtower")
     .reduce((sum, survivor) => sum + getTraitDamageBonus(survivor.trait), 0);
-  const traitHealingBonus = activeSurvivors
+  const traitHealingBonus = readySurvivors
     .filter((survivor) => survivor.assignment === "infirmary")
     .reduce((sum, survivor) => sum + getTraitHealingBonus(survivor.trait), 0);
-  const traitScrapBonus = activeSurvivors
+  const traitScrapBonus = readySurvivors
     .filter((survivor) => survivor.assignment === "workshop")
     .reduce((sum, survivor) => sum + getTraitScrapYieldBonus(survivor.trait), 0);
-  const watchtowerCrew = activeSurvivors.filter((survivor) => survivor.assignment === "watchtower").length;
-  const defenseCrew = activeSurvivors.filter((survivor) => survivor.assignment === "defense").length;
+  const watchtowerCrew = weightedAssignmentCount("watchtower");
+  const defenseCrew = weightedAssignmentCount("defense");
   const autoFireInterval =
     0.42 -
     Math.min(0.08, (watchtowerLevel - 1) * 0.015) -
     Math.min(0.03, watchtowerCrew * 0.01) -
-    (activeSurvivors.some((survivor) => survivor.trait === "Cable eye") ? 0.015 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Cable eye") ? 0.015 : 0);
   const manualCooldown =
     0.75 -
     Math.min(0.12, defenseCrew * 0.025) -
-    (activeSurvivors.some((survivor) => survivor.trait === "Cold aim") ? 0.04 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Cold aim") ? 0.04 : 0);
   const focusDuration =
     5.5 +
     Math.min(1.2, (watchtowerLevel - 1) * 0.25) +
-    (activeSurvivors.some((survivor) => survivor.trait === "Lane anchor") ? 0.5 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Lane anchor") ? 0.5 : 0);
   const shieldDuration =
     6 +
     Math.min(1.4, defenseCrew * 0.3) +
-    (activeSurvivors.some((survivor) => survivor.trait === "Wall hold") ? 0.7 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Wall hold") ? 0.7 : 0);
   const flarePrimaryDuration =
     4.8 +
     Math.min(1, infirmaryLevel * 0.15) +
-    (activeSurvivors.some((survivor) => survivor.trait === "Fast hands") ? 0.4 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Fast hands") ? 0.4 : 0);
   const flareSecondaryDuration =
     2.2 +
     Math.min(0.8, infirmaryLevel * 0.12) +
-    (activeSurvivors.some((survivor) => survivor.trait === "Steady hands") ? 0.3 : 0);
+    (readySurvivors.some((survivor) => survivor.trait === "Steady hands") ? 0.3 : 0);
   const activePerkLabels = [
     watchtowerLevel > 1 ? `Watchtower fire control: faster auto-fire` : null,
-    defenseCrew > 0 ? `Defense crew: quicker manual burst recovery` : null,
+    defenseCrew >= 1 ? `Defense crew: quicker manual burst recovery` : null,
     infirmaryLevel > 1 ? `Infirmary support: longer flare disruption` : null,
-    activeSurvivors.some((survivor) => survivor.trait === "Lane anchor")
+    readySurvivors.some((survivor) => survivor.trait === "Lane anchor")
       ? "Lane anchor: extended focus window"
       : null,
-    activeSurvivors.some((survivor) => survivor.trait === "Wall hold")
+    readySurvivors.some((survivor) => survivor.trait === "Wall hold")
       ? "Wall hold: stronger shield duration"
       : null,
-    activeSurvivors.some((survivor) => survivor.trait === "Cable eye")
+    readySurvivors.some((survivor) => survivor.trait === "Cable eye")
       ? "Cable eye: sharper watchtower cadence"
       : null,
   ].filter((entry): entry is string => Boolean(entry));
@@ -1279,7 +1299,7 @@ export function getDerivedStats(
     damageMultiplier: 1 + (watchtowerLevel - 1) * 0.12 + fighterBonus + builderTowerBonus + traitDamageBonus,
     healingBonus: infirmaryLevel - 1 + medicBonus + traitHealingBonus,
     scrapYieldMultiplier: 1 + (workshopLevel - 1) * 0.14 + scavengerBonus + traitScrapBonus,
-    assignedDefense,
+    assignedDefense: Number(assignedDefense.toFixed(1)),
     autoFireInterval: Math.max(0.28, Number(autoFireInterval.toFixed(2))),
     manualCooldown: Math.max(0.45, Number(manualCooldown.toFixed(2))),
     focusDuration: Number(focusDuration.toFixed(1)),
@@ -1301,6 +1321,70 @@ export function getNightRewardPreview(state: DeadGridState): Partial<Record<Reso
     },
     stats.scrapYieldMultiplier,
   );
+}
+
+export function getThreatLevelForDay(day: number): ThreatLevel {
+  if (day <= 2) {
+    return "Watching";
+  }
+
+  if (day <= 4) {
+    return "Escalating";
+  }
+
+  return "Critical";
+}
+
+export function getThreatLevelForState(
+  state: Pick<DeadGridState, "day" | "phase" | "threatLevel">,
+): ThreatLevel {
+  if (state.phase === "ended") {
+    return "Breached";
+  }
+
+  return THREAT_LEVELS.includes(state.threatLevel) ? state.threatLevel : getThreatLevelForDay(state.day);
+}
+
+export function getThreatEffectSummary(threatLevel: ThreatLevel): string {
+  switch (threatLevel) {
+    case "Watching":
+      return "Baseline perimeter pressure. Routes stay readable and recovery windows remain manageable.";
+    case "Escalating":
+      return "Enemy movement thickens. Route pressure climbs and the defense line starts seeing reinforced lanes.";
+    case "Critical":
+      return "The grid is slipping. Route intel worsens, lane pressure spikes, and worn crews become a real liability.";
+    case "Breached":
+    default:
+      return "The perimeter is broken. This run has already crossed into terminal loss conditions.";
+  }
+}
+
+export function getThreatMissionPressureLabel(threatLevel: ThreatLevel): string {
+  switch (threatLevel) {
+    case "Watching":
+      return "Route pressure: manageable";
+    case "Escalating":
+      return "Route pressure: climbing";
+    case "Critical":
+      return "Route pressure: critical";
+    case "Breached":
+    default:
+      return "Route pressure: collapsed";
+  }
+}
+
+export function getThreatDefensePressureLabel(threatLevel: ThreatLevel): string {
+  switch (threatLevel) {
+    case "Watching":
+      return "Perimeter strain is stable";
+    case "Escalating":
+      return "Perimeter strain is rising";
+    case "Critical":
+      return "Perimeter strain is severe";
+    case "Breached":
+    default:
+      return "Perimeter breach confirmed";
+  }
 }
 
 export function formatAssignmentLabel(assignment: SurvivorAssignment) {
@@ -1352,6 +1436,8 @@ export function getTraitEffectLabel(trait: string) {
 }
 
 function generateMissionSet(day: number): Mission[] {
+  const threatLevel = getThreatLevelForDay(day);
+
   return MISSION_BLUEPRINTS.slice(0, 3).map((blueprint, index) => {
     const difficulty = getMissionDifficulty(day, index);
     const zoneNumber = ((day + index) % 6) + 1;
@@ -1366,7 +1452,7 @@ function generateMissionSet(day: number): Mission[] {
       rewardLabel: describeReward(scaleMissionReward({ ...blueprint, difficulty }, day)),
       risk: blueprint.risk,
       duration: blueprint.duration,
-      enemyHint: getEnemyHintForMission(day, difficulty, blueprint.enemyHint),
+      enemyHint: getEnemyHintForMission(day, difficulty, blueprint.enemyHint, threatLevel),
       reward: blueprint.reward,
       approaches: createMissionApproaches(missionId, blueprint.kind, difficulty, day),
     };
@@ -1390,51 +1476,54 @@ function getMissionVariant(day: number, index: number) {
   return variants[(day + index) % variants.length];
 }
 
-function getEnemyTypesForDay(day: number): ZombieType[] {
-  if (day <= 1) {
+function getEnemyTypesForThreat(threatLevel: ThreatLevel, day: number): ZombieType[] {
+  if (threatLevel === "Watching" && day <= 1) {
     return ["walker", "runner"];
   }
 
-  if (day <= 3) {
+  if (threatLevel === "Watching" || threatLevel === "Escalating") {
     return ["walker", "runner", "runner"];
   }
 
   return ["walker", "runner", "brute"];
 }
 
-function getWaveModifierForDay(day: number): CombatBlueprint["waveModifier"] {
-  if (day <= 2) {
+function getWaveModifierForThreat(
+  threatLevel: ThreatLevel,
+  day: number,
+): CombatBlueprint["waveModifier"] {
+  if (threatLevel === "Watching") {
     return "surge";
   }
 
-  if (day <= 4) {
+  if (threatLevel === "Escalating" || day <= 4) {
     return "fortified";
   }
 
   return "blackout";
 }
 
-function getWaveModifierLabel(modifier: CombatBlueprint["waveModifier"]) {
+function getWaveModifierLabel(modifier: CombatBlueprint["waveModifier"], threatLevel: ThreatLevel) {
   switch (modifier) {
     case "surge":
-      return "Surge lanes: faster spawn rhythm";
+      return `Surge lanes: faster spawn rhythm under ${threatLevel.toLowerCase()} pressure`;
     case "fortified":
-      return "Fortified dead: heavier brute front";
+      return `Fortified dead: heavier brute front under ${threatLevel.toLowerCase()} pressure`;
     case "blackout":
     default:
-      return "Blackout: slower line visibility";
+      return `Blackout: visibility loss and harsher lane swings at ${threatLevel.toLowerCase()} threat`;
   }
 }
 
-function getLanePressureLabel(modifier: CombatBlueprint["waveModifier"]) {
+function getLanePressureLabel(modifier: CombatBlueprint["waveModifier"], threatLevel: ThreatLevel) {
   switch (modifier) {
     case "surge":
-      return "Pulse swarms overload one lane at a time";
+      return `Pulse swarms overload one lane at a time while threat stays ${threatLevel.toLowerCase()}`;
     case "fortified":
-      return "Crusher packs stack into a reinforced breach lane";
+      return "Crusher packs stack into reinforced breach lanes as threat escalates";
     case "blackout":
     default:
-      return "Shadow surges shift across the perimeter with poor visibility";
+      return "Shadow surges shift across the perimeter with poor visibility and almost no recovery margin";
   }
 }
 
@@ -1442,12 +1531,19 @@ function getEnemyHintForMission(
   day: number,
   difficulty: Mission["difficulty"],
   baseHint: string,
+  threatLevel: ThreatLevel,
 ) {
+  if (threatLevel === "Critical") {
+    return difficulty === "high"
+      ? "Brutes and runners massing // route window collapsing"
+      : `${baseHint} // hostile grid saturation`;
+  }
+
   if (day >= 4 && difficulty === "high") {
     return "Brutes and runners reported";
   }
 
-  if (day >= 2 && difficulty !== "low") {
+  if (threatLevel === "Escalating" || (day >= 2 && difficulty !== "low")) {
     return `${baseHint} // pressure climbing`;
   }
 
@@ -1627,6 +1723,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
 
   return {
     ...state,
+    threatLevel: getThreatLevelForState(state),
     recruitPool,
     dayEvents,
     selectedMissionTeamIds,
@@ -1738,6 +1835,18 @@ function getTraitStorageBonus(trait: string) {
   return trait === "Rig calm" ? 5 : 0;
 }
 
+function getSurvivorOperationalWeight(status: SurvivorStatus) {
+  switch (status) {
+    case "ready":
+      return 1;
+    case "fatigued":
+      return 0.5;
+    case "injured":
+    default:
+      return 0;
+  }
+}
+
 function getTraitDamageBonus(trait: string) {
   if (trait === "Cold aim") {
     return 0.05;
@@ -1834,15 +1943,17 @@ function applyMissionWear(
   approach: MissionApproach,
 ): SurvivorState[] {
   const shouldInjure = mission.difficulty === "high" || approach.label === "Fast entry";
-  let injuredApplied = false;
+  const team = survivors.filter((survivor) => teamIds.includes(survivor.id));
+  const injuryTargetId = shouldInjure
+    ? team.find((survivor) => survivor.status === "fatigued")?.id ?? team[0]?.id ?? null
+    : null;
 
   return survivors.map((survivor) => {
     if (!teamIds.includes(survivor.id)) {
       return survivor;
     }
 
-    if (shouldInjure && !injuredApplied) {
-      injuredApplied = true;
+    if (injuryTargetId && survivor.id === injuryTargetId) {
       return {
         ...survivor,
         status: "injured",
@@ -1861,6 +1972,13 @@ function recoverSurvivorsAfterNight(
   victory: boolean,
   healingBonus: number,
 ): SurvivorState[] {
+  const frontlineIds = new Set(
+    survivors
+      .filter((survivor) => survivor.assignment === "defense" || survivor.assignment === "watchtower")
+      .map((survivor) => survivor.id),
+  );
+  const fatigueRecoveryUnlocked = healingBonus >= 2;
+
   return survivors.map((survivor) => {
     if (survivor.status === "injured" && healingBonus > 0) {
       return {
@@ -1869,7 +1987,23 @@ function recoverSurvivorsAfterNight(
       };
     }
 
-    if (survivor.status === "fatigued" && victory) {
+    if (frontlineIds.has(survivor.id)) {
+      if (survivor.status === "fatigued" && !victory) {
+        return {
+          ...survivor,
+          status: "injured",
+        };
+      }
+
+      if (survivor.status === "ready") {
+        return {
+          ...survivor,
+          status: "fatigued",
+        };
+      }
+    }
+
+    if (survivor.status === "fatigued" && victory && fatigueRecoveryUnlocked) {
       return {
         ...survivor,
         status: "ready",
