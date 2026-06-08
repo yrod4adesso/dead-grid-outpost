@@ -352,3 +352,67 @@ test("overcrowded infirmary modifier affects defense briefing copy", async ({ pa
   await expect(page.getByText(/recovery throughput is stressed/i)).toBeVisible();
   await expect(page.getByText(/post-defense recovery is less efficient today/i)).toBeVisible();
 });
+
+test("route role persists across reload and is visible on the mission board", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.missions = parsed.missions.map((mission: { kind: string }) => {
+      if (mission.kind === "breach") {
+        return { ...mission, routeRole: "high_yield" };
+      }
+
+      if (mission.kind === "cache") {
+        return { ...mission, routeRole: "threat_control" };
+      }
+
+      return mission;
+    });
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByRole("button", { name: /depot breach/i })).toContainText(/high yield/i);
+  await page.getByRole("button", { name: /depot breach/i }).click();
+  await expect(page.getByText(/route role/i)).toBeVisible();
+  await expect(page.getByText(/big near-term payout with harsher wear/i).first()).toBeVisible();
+});
+
+test("threat-control routes queue next-day threat relief", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await page.getByRole("button", { name: /supply cache/i }).click();
+  await page.getByRole("button", { name: /careful pull/i }).click();
+
+  await expect(page.getByText(/follow-up queued: pressure lane stabilized/i)).toBeVisible();
+  await expect(page.getByText(/pressure lane stabilized/i).first()).toBeVisible();
+  await expect(page.getByText(/source: supply cache/i)).toBeVisible();
+});
+
+test("rescue routes can widen the recruitment board", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await expect(page.getByRole("button", { name: /recruit survivor/i })).toBeVisible();
+  const initialRecruitCount = await page.getByLabel(/^recruit /i).count();
+
+  await page.getByRole("button", { name: /clinic cache/i }).click();
+  await page.getByRole("button", { name: /careful pull/i }).click();
+
+  await expect(page.getByText(/recruitment board widened by 1 candidate/i)).toBeVisible();
+  const widenedRecruitCount = await page.getByLabel(/^recruit /i).count();
+  expect(widenedRecruitCount).toBeGreaterThan(initialRecruitCount);
+});

@@ -17,6 +17,8 @@ import {
   getDerivedStats,
   getMissionApproachOutcome,
   getNightRewardPreview,
+  getRouteRoleLabel,
+  getRouteRoleSummary,
   getSelectedDayEvent,
   getSelectedRecruitCandidate,
   getSelectedBuilding,
@@ -987,6 +989,8 @@ function MissionCard({
   selected: boolean;
 }) {
   const isResolved = !missionHasReward(mission);
+  const routeRoleLabel = getRouteRoleLabel(mission.routeRole);
+  const routeRoleSummary = getRouteRoleSummary(mission.routeRole);
 
   return (
     <button
@@ -1012,6 +1016,9 @@ function MissionCard({
       </div>
       <p className="mt-3 text-sm leading-6 text-white/65">{mission.description}</p>
       <div className="mt-4 flex flex-wrap gap-2">
+        <span className="rounded-full border border-[var(--signal)]/25 bg-[var(--signal)]/8 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[var(--signal)]">
+          {routeRoleLabel}
+        </span>
         <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-white/65">
           {formatMissionKind(mission.kind)}
         </span>
@@ -1019,6 +1026,7 @@ function MissionCard({
           {mission.enemyHint}
         </span>
       </div>
+      <p className="mt-3 text-sm text-white/55">{routeRoleSummary}</p>
       <p className="mt-4 text-sm font-medium text-[var(--accent-soft)]">{mission.rewardLabel}</p>
     </button>
   );
@@ -1519,6 +1527,8 @@ function MissionSelectionPanel({
   const threatPressure = getThreatMissionPressureLabel(state.threatLevel);
   const teamPressure = describeMissionTeamPressure(selectedTeam);
   const dayModifierImpact = getDayModifierMissionImpact(state.activeDayModifier);
+  const routeRoleLabel = getRouteRoleLabel(mission.routeRole);
+  const routeRoleSummary = getRouteRoleSummary(mission.routeRole);
 
   return (
     <div className="rounded-[1.6rem] border border-white/10 bg-black/25 p-5">
@@ -1529,6 +1539,10 @@ function MissionSelectionPanel({
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
           <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Route type</dt>
           <dd className="text-sm font-medium text-white">{formatMissionKind(mission.kind)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+          <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Route role</dt>
+          <dd className="text-sm font-medium text-white">{routeRoleLabel}</dd>
         </div>
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
           <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Base reward</dt>
@@ -1574,6 +1588,9 @@ function MissionSelectionPanel({
             ? "Pick up to two available survivors. Units locked to Night Defense or marked injured cannot leave the outpost for day operations. Fatigued survivors can still go, but they return less value and add operating strain."
             : "This route has already been cleared for the current day and cannot be resolved again."}
         </p>
+        <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-sm text-white/65">
+          <span className="font-medium text-white">{routeRoleLabel}:</span> {routeRoleSummary}
+        </div>
         <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-sm text-white/65">
           <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}:</span>{" "}
           {dayModifierImpact}

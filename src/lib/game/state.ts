@@ -1,4 +1,4 @@
-export const GAME_VERSION = 10;
+export const GAME_VERSION = 11;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -15,6 +15,7 @@ export type SurvivorAssignment = BuildingId | "defense" | null;
 export type SurvivorStatus = "ready" | "fatigued" | "injured";
 export type ZombieType = "walker" | "runner" | "brute";
 export type MissionKind = "scavenge" | "rescue" | "cache" | "breach";
+export type RouteRole = "high_yield" | "support" | "threat_control" | "rescue";
 
 export type MissionApproach = {
   id: string;
@@ -36,6 +37,7 @@ export type Mission = {
   zone: string;
   difficulty: "low" | "medium" | "high";
   kind: MissionKind;
+  routeRole: RouteRole;
   description: string;
   rewardLabel: string;
   risk: string;
@@ -103,7 +105,7 @@ export type DayEvent = {
 
 export type PendingConsequence = {
   id: string;
-  sourceType: "event" | "task";
+  sourceType: "event" | "task" | "mission";
   sourceTitle: string;
   label: string;
   detail: string;
@@ -285,6 +287,7 @@ const RESOURCE_BASE_CONTEXT: Record<ResourceId, string> = {
 
 const MISSION_BLUEPRINTS: Array<{
   kind: MissionKind;
+  routeRole: RouteRole;
   title: string;
   zonePrefix: string;
   description: string;
@@ -295,6 +298,7 @@ const MISSION_BLUEPRINTS: Array<{
 }> = [
   {
     kind: "scavenge",
+    routeRole: "support",
     title: "Market Sweep",
     zonePrefix: "Grid C",
     description: "Sweep abandoned kiosks and cracked apartment entries for dry goods and loose salvage.",
@@ -305,6 +309,7 @@ const MISSION_BLUEPRINTS: Array<{
   },
   {
     kind: "rescue",
+    routeRole: "rescue",
     title: "Clinic Cache",
     zonePrefix: "Grid D",
     description: "Move through a damaged emergency clinic and recover sealed trauma kits before dusk.",
@@ -315,6 +320,7 @@ const MISSION_BLUEPRINTS: Array<{
   },
   {
     kind: "breach",
+    routeRole: "high_yield",
     title: "Depot Breach",
     zonePrefix: "Grid B",
     description: "Break into a maintenance depot, cut the locks and tow salvage back under time pressure.",
@@ -325,6 +331,7 @@ const MISSION_BLUEPRINTS: Array<{
   },
   {
     kind: "cache",
+    routeRole: "threat_control",
     title: "Supply Cache",
     zonePrefix: "Grid E",
     description: "Reach a hidden drop site beneath an old station overpass and secure ration crates.",
@@ -586,7 +593,11 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
     survivors: state.survivors ?? structuredClone(DEFAULT_GAME_STATE.survivors),
     recruitPool: state.recruitPool ?? structuredClone(DEFAULT_GAME_STATE.recruitPool),
     dayEvents: state.dayEvents ?? structuredClone(DEFAULT_GAME_STATE.dayEvents),
-    missions: state.missions ?? structuredClone(DEFAULT_GAME_STATE.missions),
+    missions:
+      state.missions?.map((mission) => ({
+        ...mission,
+        routeRole: mission.routeRole ?? getRouteRoleForMissionKind(mission.kind),
+      })) ?? structuredClone(DEFAULT_GAME_STATE.missions),
     tasks: state.tasks ?? structuredClone(DEFAULT_GAME_STATE.tasks),
     pendingConsequences: state.pendingConsequences ?? [],
     activityLog: state.activityLog ?? structuredClone(DEFAULT_GAME_STATE.activityLog),
@@ -692,11 +703,20 @@ export function resolveMissionApproach(
   const outcome = getMissionApproachOutcome(state, mission, approach);
   const spentCost = invertReward(outcome.cost);
   const nextSurvivors = applyMissionWear(state.survivors, state.selectedMissionTeamIds, mission, approach);
+  const pendingConsequence = createPendingMissionConsequence(mission, approach, state.day);
+  const recruitBonus = getMissionRecruitBonus(mission, approach);
 
   const intermediateState = withAppliedReward(
     {
       ...state,
       survivors: nextSurvivors,
+      pendingConsequences: pendingConsequence
+        ? [pendingConsequence, ...state.pendingConsequences].slice(0, 4)
+        : state.pendingConsequences,
+      recruitPool:
+        recruitBonus > 0
+          ? extendRecruitPool(state.recruitPool, state.day, state.survivors.length, recruitBonus)
+          : state.recruitPool,
       missions: state.missions.map((entry) =>
         entry.id === mission.id
           ? { ...entry, title: `${entry.title} // cleared`, rewardLabel: "Route exhausted", reward: {} }
@@ -705,7 +725,9 @@ export function resolveMissionApproach(
       activityLog: [
         createLogEntry(
           `Mission resolved: ${mission.title}`,
-          `${approach.label} secured ${describeReward(outcome.reward).toLowerCase()}. ${outcome.bonusLabel}`,
+          `${approach.label} secured ${describeReward(outcome.reward).toLowerCase()}. ${outcome.bonusLabel}${
+            pendingConsequence ? ` Follow-up queued: ${pendingConsequence.label.toLowerCase()}.` : ""
+          }${recruitBonus > 0 ? ` Recruitment board widened by ${recruitBonus} candidate.` : ""}`,
         ),
         ...state.activityLog.slice(0, 5),
       ],
@@ -792,6 +814,21 @@ export function getMissionApproachOutcome(
   if (mission.kind === "breach" && activeMissionTeam.some((survivor) => survivor.trait === "Frame welder")) {
     reward.scrap = (reward.scrap ?? 0) + 1;
     bonuses.push("Frame welder added +1 scrap");
+  }
+
+  if (mission.routeRole === "high_yield") {
+    reward.scrap = (reward.scrap ?? 0) + 1;
+    bonuses.push("High-yield route added +1 scrap");
+  }
+
+  if (mission.routeRole === "support" && approach.label === "Careful pull") {
+    reward.food = (reward.food ?? 0) + 1;
+    bonuses.push("Support route added +1 food");
+  }
+
+  if (mission.routeRole === "rescue") {
+    reward.medicine = (reward.medicine ?? 0) + 1;
+    bonuses.push("Rescue route added +1 medicine");
   }
 
   if (fatiguedMissionTeam.length > 0) {
@@ -1499,6 +1536,32 @@ export function getThreatMissionPressureLabel(threatLevel: ThreatLevel): string 
   }
 }
 
+export function getRouteRoleLabel(routeRole: RouteRole): string {
+  switch (routeRole) {
+    case "high_yield":
+      return "High yield";
+    case "support":
+      return "Support";
+    case "threat_control":
+      return "Threat control";
+    case "rescue":
+      return "Rescue";
+  }
+}
+
+export function getRouteRoleSummary(routeRole: RouteRole): string {
+  switch (routeRole) {
+    case "high_yield":
+      return "Big near-term payout with harsher wear and louder fallout if the crew is already strained.";
+    case "support":
+      return "Steadier route with lower burn and cleaner crew posture than pure salvage pushes.";
+    case "threat_control":
+      return "Pressure-management route built to keep tomorrow's perimeter and threat curve steadier.";
+    case "rescue":
+      return "Roster-first route that favors people, treatment, and downstream stability over raw scrap.";
+  }
+}
+
 export function getThreatDefensePressureLabel(threatLevel: ThreatLevel): string {
   switch (threatLevel) {
     case "Watching":
@@ -1616,7 +1679,7 @@ export function getTraitEffectLabel(trait: string) {
 function generateMissionSet(day: number): Mission[] {
   const threatLevel = getThreatLevelForDay(day);
 
-  return MISSION_BLUEPRINTS.slice(0, 3).map((blueprint, index) => {
+  return MISSION_BLUEPRINTS.map((blueprint, index) => {
     const difficulty = getMissionDifficulty(day, index);
     const zoneNumber = ((day + index) % 6) + 1;
     const missionId = `${blueprint.kind}-${day}-${index}`;
@@ -1626,6 +1689,7 @@ function generateMissionSet(day: number): Mission[] {
       zone: `${blueprint.zonePrefix}-${zoneNumber}`,
       difficulty,
       kind: blueprint.kind,
+      routeRole: blueprint.routeRole,
       description: blueprint.description,
       rewardLabel: describeReward(scaleMissionReward({ ...blueprint, difficulty }, day)),
       risk: blueprint.risk,
@@ -1635,6 +1699,20 @@ function generateMissionSet(day: number): Mission[] {
       approaches: createMissionApproaches(missionId, blueprint.kind, difficulty, day),
     };
   });
+}
+
+function getRouteRoleForMissionKind(kind: MissionKind): RouteRole {
+  switch (kind) {
+    case "breach":
+      return "high_yield";
+    case "cache":
+      return "threat_control";
+    case "rescue":
+      return "rescue";
+    case "scavenge":
+    default:
+      return "support";
+  }
 }
 
 function getMissionDifficulty(day: number, index: number): Mission["difficulty"] {
@@ -2127,7 +2205,8 @@ function applyMissionWear(
   mission: Mission,
   approach: MissionApproach,
 ): SurvivorState[] {
-  const shouldInjure = mission.difficulty === "high" || approach.label === "Fast entry";
+  const supportStabilized = mission.routeRole === "support" && approach.label === "Careful pull";
+  const shouldInjure = !supportStabilized && (mission.routeRole === "high_yield" || mission.difficulty === "high" || approach.label === "Fast entry");
   const team = survivors.filter((survivor) => teamIds.includes(survivor.id));
   const injuryTargetId = shouldInjure
     ? team.find((survivor) => survivor.status === "fatigued")?.id ?? team[0]?.id ?? null
@@ -2150,6 +2229,66 @@ function applyMissionWear(
       status: survivor.status === "injured" ? "injured" : "fatigued",
     };
   });
+}
+
+function createPendingMissionConsequence(
+  mission: Mission,
+  approach: MissionApproach,
+  day: number,
+): PendingConsequence | null {
+  const triggerDay = day + 1;
+
+  if (mission.routeRole === "high_yield") {
+    return {
+      id: `pending-mission-${mission.id}`,
+      sourceType: "mission",
+      sourceTitle: mission.title,
+      label: "Hot salvage trail",
+      detail: "Tomorrow's route board inherits louder pursuit pressure from the high-yield haul.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: 1,
+    };
+  }
+
+  if (mission.routeRole === "threat_control") {
+    return {
+      id: `pending-mission-${mission.id}`,
+      sourceType: "mission",
+      sourceTitle: mission.title,
+      label: "Pressure lane stabilized",
+      detail: "The route trims tomorrow's threat carry and gives the perimeter a cleaner setup.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: -1,
+    };
+  }
+
+  if (mission.routeRole === "support" && approach.label === "Careful pull") {
+    return {
+      id: `pending-mission-${mission.id}`,
+      sourceType: "mission",
+      sourceTitle: mission.title,
+      label: "Steady supply buffer",
+      detail: "The slower support route leaves a small next-day cushion for food and medicine.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { food: 1, medicine: 1 },
+    };
+  }
+
+  return null;
+}
+
+function getMissionRecruitBonus(mission: Mission, approach: MissionApproach) {
+  if (mission.routeRole === "rescue" && approach.label === "Careful pull") {
+    return 1;
+  }
+
+  return 0;
 }
 
 function recoverSurvivorsAfterNight(
