@@ -416,3 +416,76 @@ test("rescue routes can widen the recruitment board", async ({ page }) => {
   const widenedRecruitCount = await page.getByLabel(/^recruit /i).count();
   expect(widenedRecruitCount).toBeGreaterThan(initialRecruitCount);
 });
+
+test("special night persists across reload and is surfaced in the defense briefing", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.activeSpecialNight = {
+      id: "blackout_grid",
+      label: "Blackout grid",
+      detail: "The perimeter is dropping into a deeper blackout. Lane reads and visibility calls will be worse than usual.",
+      effectType: "visibility_pressure",
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/special night/i)).toBeVisible();
+  await expect(page.getByText(/blackout grid/i).first()).toBeVisible();
+  await expect(page.getByText(/lane reads and visibility calls will be worse than usual/i)).toBeVisible();
+});
+
+test("special night is carried into the night summary screen", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.phase = "summary";
+    parsed.day = 4;
+    parsed.activeSpecialNight = {
+      id: "brute_surge",
+      label: "Brute surge",
+      detail: "Heavy bodies are converging on the line tonight. Expect harsher impact lanes and a tougher front.",
+      effectType: "enemy_pressure",
+    };
+    parsed.lastCombatSummary = {
+      status: "victory",
+      title: "Perimeter held",
+      detail: "The brute surge was held. All 3 wave groups were cleared before the line broke.",
+      rewardLabel: "+6 scrap, +2 food, +4 ammo",
+      wavesCleared: 3,
+      specialNightLabel: "Brute surge",
+      specialNightDetail: "Heavy bodies are converging on the line tonight. Expect harsher impact lanes and a tougher front.",
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/special night/i)).toBeVisible();
+  await expect(page.getByText(/brute surge/i).first()).toBeVisible();
+  await expect(page.getByText(/heavy bodies are converging on the line tonight/i)).toBeVisible();
+});

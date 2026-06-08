@@ -450,6 +450,10 @@ export function DeadGridApp() {
                           <span className="font-medium text-white">{state.activeDayModifier?.label ?? "None"}</span>
                         </div>
                         <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
+                          <span>Special night</span>
+                          <span className="font-medium text-white">{state.activeSpecialNight?.label ?? "Standard night"}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
                           <span>Upgrade impact</span>
                           <span className="font-medium text-white">
                             Tower x{buildingStats.damageMultiplier.toFixed(2)} / Heal +{buildingStats.healingBonus}
@@ -468,6 +472,12 @@ export function DeadGridApp() {
                         <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}:</span>{" "}
                         {dayModifierDefenseImpact}
                       </div>
+                      {state.activeSpecialNight ? (
+                        <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
+                          <span className="font-medium text-white">{state.activeSpecialNight.label}:</span>{" "}
+                          {state.activeSpecialNight.detail}
+                        </div>
+                      ) : null}
                     </div>
                     <SelectionPanel
                       ctaLabel="Start night defense"
@@ -794,6 +804,8 @@ function RunSummaryScreen({
   }
 
   const isVictory = summary.status === "victory";
+  const specialNightLabel = summary.specialNightLabel;
+  const specialNightDetail = summary.specialNightDetail;
 
   return (
     <section className="grid min-h-[calc(100vh-3rem)] items-center gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -814,6 +826,13 @@ function RunSummaryScreen({
           <StatRow label="Waves cleared" value={`${summary.wavesCleared}`} />
           <StatRow label="Current day" value={`${state.day}`} />
         </div>
+        {specialNightLabel ? (
+          <div className="mt-5 rounded-[1.6rem] border border-amber-500/20 bg-amber-500/8 p-5 text-sm text-amber-100">
+            <p className="text-xs uppercase tracking-[0.24em] text-amber-200/80">Special night</p>
+            <p className="mt-3 text-lg font-medium text-white">{specialNightLabel}</p>
+            <p className="mt-2 text-sm text-amber-100/85">{specialNightDetail}</p>
+          </div>
+        ) : null}
         <div className="mt-5 rounded-[1.6rem] border border-white/8 bg-black/20 p-5">
           <p className="text-xs uppercase tracking-[0.24em] text-white/45">Resolution</p>
           <p className="mt-3 text-lg font-medium text-white">{summary.rewardLabel}</p>
@@ -837,6 +856,11 @@ function RunSummaryScreen({
       <aside className="grid gap-4 rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-xl shadow-black/20">
         <p className="text-xs uppercase tracking-[0.28em] text-white/45">After-action brief</p>
         <div className="grid gap-3">
+          {specialNightLabel ? (
+            <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
+              Tonight was logged as a <span className="font-medium text-white">{specialNightLabel}</span>.
+            </div>
+          ) : null}
           <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
             Threat level now sits at <span className="font-medium text-white">{state.threatLevel}</span>.
           </div>

@@ -1,4 +1,4 @@
-export const GAME_VERSION = 11;
+export const GAME_VERSION = 12;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -9,6 +9,7 @@ export type DayModifierId =
   | "heavy-fog"
   | "overcrowded-infirmary"
   | "salvage-window";
+export type SpecialNightId = "brute_surge" | "blackout_grid" | "thin_supplies" | "pursuit_spike";
 export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower";
 export type SurvivorRole = "fighter" | "scavenger" | "medic" | "builder";
 export type SurvivorAssignment = BuildingId | "defense" | null;
@@ -123,6 +124,13 @@ export type DayModifier = {
   effectType: "resource_pressure" | "intel_pressure" | "recovery_pressure" | "salvage_boost";
 };
 
+export type SpecialNight = {
+  id: SpecialNightId;
+  label: string;
+  detail: string;
+  effectType: "enemy_pressure" | "visibility_pressure" | "supply_pressure" | "pursuit_pressure";
+};
+
 export type ActivityLogEntry = {
   id: string;
   title: string;
@@ -178,6 +186,8 @@ export type CombatSummary = {
   detail: string;
   rewardLabel: string;
   wavesCleared: number;
+  specialNightLabel?: string;
+  specialNightDetail?: string;
 };
 
 export type BuildingStats = {
@@ -229,6 +239,33 @@ const DAY_MODIFIER_ROTATION: DayModifier[] = [
   },
 ];
 
+const SPECIAL_NIGHT_ROTATION: SpecialNight[] = [
+  {
+    id: "brute_surge",
+    label: "Brute surge",
+    detail: "Heavy bodies are converging on the line tonight. Expect harsher impact lanes and a tougher front.",
+    effectType: "enemy_pressure",
+  },
+  {
+    id: "blackout_grid",
+    label: "Blackout grid",
+    detail: "The perimeter is dropping into a deeper blackout. Lane reads and visibility calls will be worse than usual.",
+    effectType: "visibility_pressure",
+  },
+  {
+    id: "thin_supplies",
+    label: "Thin supplies",
+    detail: "Resupply buffers are strained tonight. Support comfort is thinner and the reward floor is less forgiving.",
+    effectType: "supply_pressure",
+  },
+  {
+    id: "pursuit_spike",
+    label: "Pursuit spike",
+    detail: "Recent noise and movement pulled extra attention onto the perimeter. Expect a faster pressure climb.",
+    effectType: "pursuit_pressure",
+  },
+];
+
 const MISSION_DIFFICULTY_MULTIPLIER: Record<Mission["difficulty"], number> = {
   low: 0.95,
   medium: 1.08,
@@ -252,6 +289,7 @@ export type DeadGridState = {
   lastSavedLabel: string;
   resources: ResourceCardState[];
   activeDayModifier: DayModifier | null;
+  activeSpecialNight: SpecialNight | null;
   buildings: BuildingState[];
   survivors: SurvivorState[];
   recruitPool: RecruitmentCandidate[];
@@ -558,6 +596,7 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
   lastSavedLabel: "No save yet",
   resources: buildInitialResources(),
   activeDayModifier: generateDayModifier(1),
+  activeSpecialNight: null,
   buildings: INITIAL_BUILDINGS,
   survivors: INITIAL_SURVIVORS,
   recruitPool: generateRecruitPool(1, INITIAL_SURVIVORS.length),
@@ -589,6 +628,7 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
     ...state,
     resources: state.resources ?? structuredClone(DEFAULT_GAME_STATE.resources),
     activeDayModifier: state.activeDayModifier ?? generateDayModifier(state.day ?? DEFAULT_GAME_STATE.day),
+    activeSpecialNight: state.activeSpecialNight ?? null,
     buildings: state.buildings ?? structuredClone(DEFAULT_GAME_STATE.buildings),
     survivors: state.survivors ?? structuredClone(DEFAULT_GAME_STATE.survivors),
     recruitPool: state.recruitPool ?? structuredClone(DEFAULT_GAME_STATE.recruitPool),
@@ -1119,16 +1159,25 @@ export function startNightDefense(state: DeadGridState): DeadGridState {
   const threatLevel = getThreatLevelForState(state);
   const waveModifier = getWaveModifierForThreat(threatLevel, state.day);
   const dayModifier = state.activeDayModifier;
+  const specialNight =
+    state.activeSpecialNight ?? generateSpecialNight(state.day, threatLevel, state.pendingConsequences);
   const effectiveHealingBonus =
-    dayModifier?.id === "overcrowded-infirmary" ? Math.max(0, stats.healingBonus - 1) : stats.healingBonus;
-  const rewardPreview = applyDayModifierToNightReward(getNightRewardPreview(state), dayModifier);
+    dayModifier?.id === "overcrowded-infirmary" || specialNight?.id === "thin_supplies"
+      ? Math.max(0, stats.healingBonus - 1)
+      : stats.healingBonus;
+  const rewardPreview = applySpecialNightToReward(
+    applyDayModifierToNightReward(getNightRewardPreview(state), dayModifier),
+    specialNight,
+  );
+  const specialWaveModifier = getSpecialNightWaveModifier(waveModifier, specialNight);
 
   return {
     ...state,
     phase: "combat",
+    activeSpecialNight: specialNight,
     combatBlueprint: {
       arenaLabel: `Perimeter East // Day ${state.day}`,
-      waves: [3 + Math.min(state.day - 1, 2), 4 + Math.min(state.day - 1, 2), 5 + Math.min(state.day - 1, 2)],
+      waves: getSpecialNightWaves(state.day, specialNight),
       baseHp: 120 + state.day * 6 + stats.assignedDefense * 6,
       playerHp: 90 + state.day * 4,
       damageMultiplier: stats.damageMultiplier,
@@ -1140,29 +1189,36 @@ export function startNightDefense(state: DeadGridState): DeadGridState {
       flarePrimaryDuration: stats.flarePrimaryDuration,
       flareSecondaryDuration: stats.flareSecondaryDuration,
       reward: rewardPreview,
-      enemyTypes: getEnemyTypesForThreat(threatLevel, state.day),
-      waveModifier,
-      waveModifierLabel: applyDayModifierToWaveLabel(
-        getWaveModifierLabel(waveModifier, threatLevel),
-        dayModifier,
+      enemyTypes: getEnemyTypesForSpecialNight(getEnemyTypesForThreat(threatLevel, state.day), specialNight),
+      waveModifier: specialWaveModifier,
+      waveModifierLabel: applySpecialNightToWaveLabel(
+        applyDayModifierToWaveLabel(getWaveModifierLabel(specialWaveModifier, threatLevel), dayModifier),
+        specialNight,
       ),
-      lanePressureLabel: applyDayModifierToLanePressure(
-        getLanePressureLabel(waveModifier, threatLevel),
-        dayModifier,
+      lanePressureLabel: applySpecialNightToLanePressure(
+        applyDayModifierToLanePressure(getLanePressureLabel(specialWaveModifier, threatLevel), dayModifier),
+        specialNight,
       ),
-      activePerkLabels: stats.activePerkLabels,
-      supportCharges: {
-        medkit: 1 + Math.min(1, effectiveHealingBonus),
-        patch: 1 + Math.min(1, Math.floor(state.day / 4)),
-        focus: 1 + Math.min(1, Math.floor(stats.assignedDefense / 2)),
-        shield: 1 + Math.min(1, Math.floor(state.day / 3)),
-        flare: 1 + Math.min(1, Math.floor(state.day / 3)),
-      },
+      activePerkLabels: specialNight
+        ? [...stats.activePerkLabels, `Special night: ${specialNight.label}`]
+        : stats.activePerkLabels,
+      supportCharges: getSpecialNightSupportCharges(
+        {
+          medkit: 1 + Math.min(1, effectiveHealingBonus),
+          patch: 1 + Math.min(1, Math.floor(state.day / 4)),
+          focus: 1 + Math.min(1, Math.floor(stats.assignedDefense / 2)),
+          shield: 1 + Math.min(1, Math.floor(state.day / 3)),
+          flare: 1 + Math.min(1, Math.floor(state.day / 3)),
+        },
+        specialNight,
+      ),
     },
     activityLog: [
       createLogEntry(
         "Night defense started",
-        `Barricade teams are locking into ${state.day === 1 ? "the first" : "another"} night cycle.`,
+        specialNight
+          ? `Barricade teams are locking into a ${specialNight.label.toLowerCase()} cycle. ${specialNight.detail}`
+          : `Barricade teams are locking into ${state.day === 1 ? "the first" : "another"} night cycle.`,
       ),
       ...state.activityLog.slice(0, 5),
     ],
@@ -1173,19 +1229,22 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
   const victory = outcome.status === "victory";
   const stats = getDerivedStats(state.buildings, state.survivors);
   const nextDay = victory ? state.day + 1 : state.day;
+  const resolvedSpecialNight = state.activeSpecialNight;
   const pendingResolution = victory
     ? resolvePendingConsequencesForDay(state.pendingConsequences, nextDay)
     : { remaining: state.pendingConsequences, logs: [], reward: {}, threatDelta: 0 };
+  const nextThreatLevel = victory
+    ? shiftThreatLevel(getThreatLevelForDay(nextDay), pendingResolution.threatDelta)
+    : "Breached";
 
   let nextState: DeadGridState = {
     ...state,
     day: nextDay,
     phase: victory ? "summary" : "ended",
-    threatLevel: victory
-      ? shiftThreatLevel(getThreatLevelForDay(nextDay), pendingResolution.threatDelta)
-      : "Breached",
+    threatLevel: nextThreatLevel,
     combatBlueprint: null,
     activeDayModifier: victory ? generateDayModifier(nextDay) : state.activeDayModifier,
+    activeSpecialNight: victory ? generateSpecialNight(nextDay, nextThreatLevel, pendingResolution.remaining) : state.activeSpecialNight,
     survivors: recoverSurvivorsAfterNight(state.survivors, victory, stats.healingBonus),
     recruitPool: victory ? generateRecruitPool(nextDay, state.survivors.length) : state.recruitPool,
     selectedRecruitId: victory
@@ -1231,18 +1290,28 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
       status: outcome.status,
       title: victory ? "Perimeter held" : "Barricade failed",
       detail: victory
-        ? `All ${outcome.wavesCleared} wave groups were cleared before the line broke.`
-        : `The line collapsed after ${outcome.wavesCleared} cleared wave groups.`,
+        ? resolvedSpecialNight
+          ? `The ${resolvedSpecialNight.label.toLowerCase()} was held. All ${outcome.wavesCleared} wave groups were cleared before the line broke.`
+          : `All ${outcome.wavesCleared} wave groups were cleared before the line broke.`
+        : resolvedSpecialNight
+          ? `The line collapsed during the ${resolvedSpecialNight.label.toLowerCase()} after ${outcome.wavesCleared} cleared wave groups.`
+          : `The line collapsed after ${outcome.wavesCleared} cleared wave groups.`,
       rewardLabel,
       wavesCleared: outcome.wavesCleared,
+      specialNightLabel: resolvedSpecialNight?.label,
+      specialNightDetail: resolvedSpecialNight?.detail,
     },
     activityLog: [
       ...pendingResolution.logs,
       createLogEntry(
         victory ? "Night defense won" : "Night defense lost",
         victory
-          ? `The outpost secured ${rewardLabel.toLowerCase()} and rolls into day ${nextState.day} with fresh routes.`
-          : "The perimeter broke. Supply loss has been logged and the infirmary is stabilizing survivors.",
+          ? resolvedSpecialNight
+            ? `The outpost survived the ${resolvedSpecialNight.label.toLowerCase()}, secured ${rewardLabel.toLowerCase()}, and rolls into day ${nextState.day} with fresh routes.`
+            : `The outpost secured ${rewardLabel.toLowerCase()} and rolls into day ${nextState.day} with fresh routes.`
+          : resolvedSpecialNight
+            ? `The perimeter broke during the ${resolvedSpecialNight.label.toLowerCase()}. Supply loss has been logged and the infirmary is stabilizing survivors.`
+            : "The perimeter broke. Supply loss has been logged and the infirmary is stabilizing survivors.",
       ),
       ...nextState.activityLog.slice(0, 5),
     ],
@@ -1954,6 +2023,36 @@ function generateDayModifier(day: number): DayModifier {
   return DAY_MODIFIER_ROTATION[(Math.max(day, 1) - 1) % DAY_MODIFIER_ROTATION.length];
 }
 
+function generateSpecialNight(
+  day: number,
+  threatLevel: ThreatLevel,
+  pendingConsequences: PendingConsequence[],
+): SpecialNight | null {
+  if (day < 3) {
+    return null;
+  }
+
+  const hasPursuitPressure = pendingConsequences.some((consequence) => (consequence.threatDelta ?? 0) > 0);
+
+  if (threatLevel === "Critical" && day % 2 === 1) {
+    return SPECIAL_NIGHT_ROTATION.find((night) => night.id === "pursuit_spike") ?? null;
+  }
+
+  if (day % 6 === 0) {
+    return SPECIAL_NIGHT_ROTATION.find((night) => night.id === "thin_supplies") ?? null;
+  }
+
+  if (day % 5 === 0) {
+    return SPECIAL_NIGHT_ROTATION.find((night) => night.id === "blackout_grid") ?? null;
+  }
+
+  if (hasPursuitPressure || day % 4 === 0) {
+    return SPECIAL_NIGHT_ROTATION.find((night) => night.id === "brute_surge") ?? null;
+  }
+
+  return null;
+}
+
 function normalizeState(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
   const recruitPool = state.recruitPool ?? [];
@@ -1986,6 +2085,8 @@ function normalizeState(state: DeadGridState): DeadGridState {
     ...state,
     threatLevel: getThreatLevelForState(state),
     activeDayModifier: getDayModifierForState(state),
+    activeSpecialNight:
+      state.activeSpecialNight ?? generateSpecialNight(state.day, getThreatLevelForState(state), pendingConsequences),
     recruitPool,
     dayEvents,
     pendingConsequences,
@@ -2396,6 +2497,122 @@ function applyDayModifierToLanePressure(label: string, dayModifier: DayModifier 
 
   if (dayModifier?.id === "ammo-shortage") {
     return `${label} Resupply discipline is tighter than usual.`;
+  }
+
+  return label;
+}
+
+function getSpecialNightWaves(day: number, specialNight: SpecialNight | null): CombatBlueprint["waves"] {
+  const baseWaves: CombatBlueprint["waves"] = [
+    3 + Math.min(day - 1, 2),
+    4 + Math.min(day - 1, 2),
+    5 + Math.min(day - 1, 2),
+  ];
+
+  if (specialNight?.id === "pursuit_spike") {
+    return [baseWaves[0], baseWaves[1], baseWaves[2] + 1];
+  }
+
+  if (specialNight?.id === "brute_surge") {
+    return [baseWaves[0] + 1, baseWaves[1], baseWaves[2]];
+  }
+
+  return baseWaves;
+}
+
+function getSpecialNightWaveModifier(
+  waveModifier: CombatBlueprint["waveModifier"],
+  specialNight: SpecialNight | null,
+): CombatBlueprint["waveModifier"] {
+  if (specialNight?.id === "blackout_grid") {
+    return "blackout";
+  }
+
+  if (specialNight?.id === "brute_surge") {
+    return "fortified";
+  }
+
+  if (specialNight?.id === "pursuit_spike") {
+    return "surge";
+  }
+
+  return waveModifier;
+}
+
+function getEnemyTypesForSpecialNight(
+  enemyTypes: ZombieType[],
+  specialNight: SpecialNight | null,
+): ZombieType[] {
+  if (specialNight?.id === "brute_surge") {
+    return [...enemyTypes, "brute"];
+  }
+
+  if (specialNight?.id === "pursuit_spike") {
+    return [...enemyTypes, "runner"];
+  }
+
+  return enemyTypes;
+}
+
+function getSpecialNightSupportCharges(
+  supportCharges: CombatBlueprint["supportCharges"],
+  specialNight: SpecialNight | null,
+) {
+  if (specialNight?.id === "thin_supplies") {
+    return {
+      ...supportCharges,
+      medkit: Math.max(1, supportCharges.medkit - 1),
+      patch: Math.max(1, supportCharges.patch - 1),
+    };
+  }
+
+  return supportCharges;
+}
+
+function applySpecialNightToReward(
+  reward: Partial<Record<ResourceId, number>>,
+  specialNight: SpecialNight | null,
+) {
+  if (specialNight?.id === "brute_surge") {
+    return {
+      ...reward,
+      scrap: (reward.scrap ?? 0) + 2,
+    };
+  }
+
+  if (specialNight?.id === "thin_supplies") {
+    return {
+      ...reward,
+      food: Math.max(0, (reward.food ?? 0) - 1),
+    };
+  }
+
+  return reward;
+}
+
+function applySpecialNightToWaveLabel(label: string, specialNight: SpecialNight | null) {
+  if (!specialNight) {
+    return label;
+  }
+
+  return `${label} // ${specialNight.label.toLowerCase()}`;
+}
+
+function applySpecialNightToLanePressure(label: string, specialNight: SpecialNight | null) {
+  if (specialNight?.id === "brute_surge") {
+    return `${label} Heavy impacts are expected on the front lane rotation.`;
+  }
+
+  if (specialNight?.id === "blackout_grid") {
+    return `${label} Grid visibility is worse than the normal blackout pattern.`;
+  }
+
+  if (specialNight?.id === "thin_supplies") {
+    return `${label} Support comfort is thinner than usual tonight.`;
+  }
+
+  if (specialNight?.id === "pursuit_spike") {
+    return `${label} Pursuit pressure is accelerating faster than a standard night.`;
   }
 
   return label;
