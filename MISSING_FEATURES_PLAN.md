@@ -2,190 +2,193 @@
 
 ## Goal
 
-Capture the next missing features for `dead-grid-outpost` in a durable plan so implementation can continue without losing scope, priorities, or acceptance intent.
+Capture the remaining feature blocks for `dead-grid-outpost` in a durable roadmap that reflects the current shipped state instead of the earlier MVP gap list.
+
+This file is now the top-level planning reference for what is still missing after the first major progression and QA passes landed on `main`.
 
 ## Current Product Snapshot
 
 The current prototype already includes:
 
-- Start screen with local save resume behavior
-- Outpost dashboard with building summaries and upgrades
-- Resource economy with visible pressure
-- Mission, event, recruit, and task flows
-- Night defense combat phase
-- Persistent browser-local save state
-- Basic end-to-end smoke coverage
+- explicit landing flow with `Start new run` and `Continue run`
+- post-defense victory summary
+- terminal `Run ended` state for defeats
+- browser-local persistence with resumable-save rules
+- Playwright regression coverage plus CI
+- threat escalation with visible pressure tiers
+- persistent survivor wear and readiness pressure
+- event and task follow-up consequences
+- day modifiers with route and defense hooks
+- route pressure diversity with visible route roles
+- public README and repo-level setup / test documentation
 
-Current gaps are less about raw MVP existence and more about progression depth, run structure, and release hardening.
+The product is no longer missing basic run structure.
 
-## Priority Order
+The remaining gaps are now mostly about:
+
+- encounter variety
+- content depth
+- stronger roster differentiation
+- final UX productization
+
+## Completed Blocks
+
+These blocks are considered done at the roadmap level:
 
 1. Run Completion Layer
-2. QA and persistence hardening
-3. Core progression depth
-4. Content expansion
-5. UX productization and docs
+2. QA And Persistence Hardening
+3. Threat And Survivor Pressure
+4. Follow-Up Consequences
+5. Day Modifiers And Run Texture
+6. Route Pressure Diversity
+7. README And Base Repo Productization
 
-## P1: Run Completion Layer
+## Remaining Priority Order
 
-### Problem
+1. Special Nights / Spike Encounters
+2. Content Expansion
+3. Deeper Recruit / Survivor Variety
+4. UX Productization
+5. Docs And Repo Polish Follow-Up
 
-The game loop works, but the run still feels like a state machine instead of a full run lifecycle. The player can act, but the product does not yet strongly frame continuation, failure, or completion.
-
-### Scope
-
-- Add an explicit `Continue run` entry path on the landing screen when save data exists
-- Add a clearer `Run ended` / `Outpost lost` state after meaningful defeat
-- Add a `Day summary` or `Night summary` handoff after defense resolution
-- Make run transitions feel intentional instead of implicit
-
-### Acceptance Criteria
-
-- A saved run is visible as something the player can continue, not only auto-resume
-- A failed or ended run has a readable terminal state
-- The player sees a short summary after night resolution before dropping back into the next loop
-- The flow from day planning to combat to aftermath is easy to follow
-
-## P1: QA And Persistence Hardening
+## P1: Special Nights / Spike Encounters
 
 ### Problem
 
-The current test surface proves only a small MVP path. The product now needs stronger regression protection around the real interaction paths.
+Night defense is now mechanically supported by several pressure systems, but the night phase itself still risks feeling too samey across multiple successful days.
 
 ### Scope
 
-- Add Playwright coverage for:
-  - resume / reset
-  - recruit flow
-  - day event resolution
-  - task completion
-  - defeat / run-end behavior
-- Verify local save persistence across multi-step flows
-- Optionally add CI for `lint`, `build`, and `test:e2e`
+- Add occasional special nights with one strong rule twist
+- Introduce a small first set such as:
+  - brute surge night
+  - blackout / visibility night
+  - scarcity / thin supply night
+  - pursuit / pressure-spike night
+- Surface special-night rules clearly in the defense briefing
+- Hook special nights into reward, wave pressure, or support expectations
 
 ### Acceptance Criteria
 
-- Core interaction paths have deterministic E2E coverage
-- Save/load survives reloads across multiple state transitions
-- A future feature pass can be validated without relying only on manual playtesting
-
-## P1: Core Progression Depth
-
-### Problem
-
-The systems exist, but medium-term consequences are still light. Many choices resolve immediately and do not yet create enough long-tail pressure.
-
-### Scope
-
-- Make threat escalation more visible across days
-- Increase medium-term consequences on survivors and resources
-- Let event and task outcomes create follow-up pressure or opportunities
-- Strengthen the feeling that later days are materially different from early days
-
-### Acceptance Criteria
-
-- Day 3+ feels different from day 1 beyond numbers alone
-- Survivor and resource decisions create visible downstream effects
-- The player has to adapt strategy rather than only repeat the same loop
+- At least two special-night variants can appear
+- A special night changes player planning, not only flavor text
+- The player can tell from the UI what tonight's special rule is
+- Existing day modifiers and threat systems still behave coherently with the special-night layer
 
 ## P2: Content Expansion
 
 ### Problem
 
-The prototype loop is working, but replay variety is still limited.
+The structure is much deeper now, but the content pool is still relatively compact. Repeated runs will still recycle mission, event, and task combinations too quickly.
 
 ### Scope
 
-- Add more mission variants
-- Add more event chains and follow-up events
-- Add more recruit archetypes and trait combinations
+- Add more mission variants inside each current route role
+- Add more event chains or event follow-up combinations
 - Add more task variants
-- Add special nights or spike encounters
+- Add more route situations that play differently under threat / modifiers
+- Expand the pool of special nights after the first slice lands
 
 ### Acceptance Criteria
 
-- Repeated runs surface meaningfully different combinations of choices
-- The player sees more than a small repeating pool of scenarios
-- Build and crew composition matter more over time
+- Repeated runs produce more clearly different boards
+- Route, event, and task combinations do not recycle too quickly
+- The new systemic layers have enough content to stay interesting over several runs
+
+## P2: Deeper Recruit / Survivor Variety
+
+### Problem
+
+Survivor pressure is much better, but roster identity is still lighter than the surrounding systems now deserve.
+
+### Scope
+
+- Add more differentiated survivor traits
+- Add stronger archetype distinctions by role
+- Introduce more interesting recruit profiles and rarer candidate mixes
+- Optionally add specialist or high-impact recruits later in the run
+
+### Acceptance Criteria
+
+- Roster composition matters more than raw headcount
+- Recruit decisions feel more strategic
+- Different crews support different route and defense styles
 
 ## P2: UX Productization
 
 ### Problem
 
-The UX is much better than the initial MVP, but it still behaves like a strong prototype rather than a polished small game.
+The systems have grown faster than the onboarding and explanation layer. The game is understandable for a returning tester, but still asks too much interpretation from a fresh player.
 
 ### Scope
 
-- Add a light onboarding layer for the day loop
-- Improve action availability feedback for locked or exhausted choices
-- Refine the run log / activity feed for readability
-- Tighten state summaries and outcome messaging
+- Add a light onboarding layer for the core loop
+- Improve locked / unavailable action explanations
+- Refine activity log readability
+- Tighten panel summaries for threat, modifiers, follow-ups, and route roles
+- Improve scanability where multiple pressure systems now overlap
 
 ### Acceptance Criteria
 
-- New players can understand the loop without guessing
-- Locked and unavailable actions are clearly explained
-- Important feedback is scannable during and after each phase
+- New players can understand the loop without trial-and-error
+- Important pressure systems are easy to read from the dashboard
+- Unavailable actions are explained clearly
 
-## P2: Docs And Repo Polish
+## P3: Docs And Repo Polish Follow-Up
 
 ### Problem
 
-The repo is now public, but the docs still read like boilerplate and do not represent the actual product.
+The README is now real, but the broader repo docs can still grow with the project.
 
 ### Scope
 
-- Replace the generated README with a real project overview
-- Document controls, setup, testing, and current scope
-- Add a short roadmap section
-- Clarify prototype status and next milestones
+- Add roadmap notes that match the live implementation state
+- Add contributor-oriented notes if development broadens
+- Optionally add design notes for systems like threat, follow-ups, and route roles
 
 ### Acceptance Criteria
 
-- A new developer understands what the game is and how to run it
-- The repo reflects the actual project instead of default Next.js scaffolding
+- The repo stays aligned with the real product state
+- A new contributor can understand both the current game and the next intended blocks
 
 ## Recommended Implementation Sequence
 
 ### Phase 1
 
-- Run Completion Layer
-- Reset / continue / summary UX
-- Defeat / terminal run handling
+- Special Nights / Spike Encounters
+- keep the slice small and systemic
+- use the current defense model instead of redesigning combat
 
 ### Phase 2
 
-- QA and persistence hardening
-- Expand E2E coverage
-- Stabilize regression checks
+- Content Expansion
+- fill the improved systems with more mission / event / task variety
 
 ### Phase 3
 
-- Core progression depth
-- More visible strategic consequences
+- Deeper Recruit / Survivor Variety
+- make roster-building decisions matter more across runs
 
 ### Phase 4
 
-- Content expansion
-- More variety in missions, events, recruits, and nights
+- UX Productization
+- improve learning curve and scanability after the next systemic additions land
 
 ### Phase 5
 
-- UX productization and docs pass
+- Docs And Repo Polish Follow-Up
 
-## Suggested First Build Slice
+## Suggested Next Build Slice
 
-If implementation starts immediately, the first slice should be:
+If implementation starts immediately, the next slice should be:
 
-1. Explicit `Continue run` on landing
-2. Post-defense summary screen
-3. Defeat / run-ended state
-4. Playwright coverage for those flows
-
-This gives the prototype a more complete run loop before expanding content.
+1. write a focused spec for `Special Nights / Spike Encounters`
+2. ship a small first set of special-night variants
+3. surface them clearly in the defense briefing
+4. add E2E coverage for at least one deterministic special-night path
 
 ## Notes
 
-- The highest-value missing feature is not visual polish; it is stronger run structure
-- The highest engineering risk is thin regression coverage
-- Content expansion should come after the run lifecycle feels complete enough to carry it
+- The biggest missing value is now variety, not base structure
+- The next best payoff is making night defense less predictable before doing broad content volume
+- Content expansion should build on the new progression systems, not bypass them
