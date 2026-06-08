@@ -21,6 +21,9 @@ import {
   getSelectedRecruitCandidate,
   getSelectedBuilding,
   getSelectedBuildingSurvivors,
+  getDayModifierImpactSummary,
+  getDayModifierMissionImpact,
+  getDayModifierDefenseImpact,
   getThreatDefensePressureLabel,
   getThreatEffectSummary,
   getThreatMissionPressureLabel,
@@ -94,6 +97,14 @@ export function DeadGridApp() {
   const selectedEvent = useMemo(() => getSelectedDayEvent(state), [state]);
   const treatmentSlots = useMemo(() => getTreatmentSlotCount(state), [state]);
   const threatSummary = useMemo(() => getThreatEffectSummary(state.threatLevel), [state.threatLevel]);
+  const dayModifierSummary = useMemo(
+    () => getDayModifierImpactSummary(state.activeDayModifier),
+    [state.activeDayModifier],
+  );
+  const dayModifierDefenseImpact = useMemo(
+    () => getDayModifierDefenseImpact(state.activeDayModifier),
+    [state.activeDayModifier],
+  );
   const threatDefensePressure = useMemo(
     () => getThreatDefensePressureLabel(state.threatLevel),
     [state.threatLevel],
@@ -254,10 +265,15 @@ export function DeadGridApp() {
                   <div className="mt-6 flex flex-wrap gap-3">
                     <Badge label="Status" value="Day Shift" />
                     <Badge label="Threat" value={state.threatLevel} />
+                    <Badge label="Modifier" value={state.activeDayModifier?.label ?? "None"} />
                     <Badge label="Save" value={state.lastSavedLabel} />
                   </div>
                   <div className="mt-4 max-w-3xl rounded-[1.4rem] border border-white/10 bg-black/20 px-4 py-4 text-sm text-white/68">
                     <span className="font-medium text-white">{threatDefensePressure}.</span> {threatSummary}
+                  </div>
+                  <div className="mt-3 max-w-3xl rounded-[1.4rem] border border-white/10 bg-black/20 px-4 py-4 text-sm text-white/68">
+                    <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}.</span>{" "}
+                    {dayModifierSummary}
                   </div>
                 </div>
 
@@ -428,6 +444,10 @@ export function DeadGridApp() {
                           <span className="font-medium text-white">{threatDefensePressure}</span>
                         </div>
                         <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
+                          <span>Day modifier</span>
+                          <span className="font-medium text-white">{state.activeDayModifier?.label ?? "None"}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
                           <span>Upgrade impact</span>
                           <span className="font-medium text-white">
                             Tower x{buildingStats.damageMultiplier.toFixed(2)} / Heal +{buildingStats.healingBonus}
@@ -441,6 +461,10 @@ export function DeadGridApp() {
                           <span>Roster quality</span>
                           <span className="font-medium text-white">{defenseRosterPressure}</span>
                         </div>
+                      </div>
+                      <div className="mt-4 rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-sm text-white/65">
+                        <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}:</span>{" "}
+                        {dayModifierDefenseImpact}
                       </div>
                     </div>
                     <SelectionPanel
@@ -713,6 +737,10 @@ function StartScreen({
               <div className="flex items-center justify-between gap-4">
                 <span className="text-white/55">Saved</span>
                 <span className="font-medium text-white">{resumableState?.lastSavedLabel}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-white/55">Modifier</span>
+                <span className="font-medium text-white">{resumableState?.activeDayModifier?.label ?? "None"}</span>
               </div>
             </div>
           </div>
@@ -1490,6 +1518,7 @@ function MissionSelectionPanel({
   const missionAvailable = missionHasReward(mission);
   const threatPressure = getThreatMissionPressureLabel(state.threatLevel);
   const teamPressure = describeMissionTeamPressure(selectedTeam);
+  const dayModifierImpact = getDayModifierMissionImpact(state.activeDayModifier);
 
   return (
     <div className="rounded-[1.6rem] border border-white/10 bg-black/25 p-5">
@@ -1512,6 +1541,10 @@ function MissionSelectionPanel({
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
           <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Threat pressure</dt>
           <dd className="text-sm font-medium text-white">{threatPressure}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+          <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Day modifier</dt>
+          <dd className="text-sm font-medium text-white">{state.activeDayModifier?.label ?? "None"}</dd>
         </div>
         <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
           <dt className="text-xs uppercase tracking-[0.24em] text-white/45">Window</dt>
@@ -1541,6 +1574,10 @@ function MissionSelectionPanel({
             ? "Pick up to two available survivors. Units locked to Night Defense or marked injured cannot leave the outpost for day operations. Fatigued survivors can still go, but they return less value and add operating strain."
             : "This route has already been cleared for the current day and cannot be resolved again."}
         </p>
+        <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-sm text-white/65">
+          <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}:</span>{" "}
+          {dayModifierImpact}
+        </div>
         {fatiguedTeam.length > 0 ? (
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
             Worn crew selected: {fatiguedTeam.map((survivor) => survivor.name).join(", ")}. Route costs and fallout will hit harder.

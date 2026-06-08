@@ -218,3 +218,137 @@ test("resolved follow-up consequences clear from pending and remain in activity 
   await expect(page.getByText(/no queued follow-up pressure/i)).toBeVisible();
   await expect(page.getByText(/consequence resolved: quiet ration window/i)).toBeVisible();
 });
+
+test("active day modifier persists across reload and is visible on continue", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.activeDayModifier = {
+      id: "heavy-fog",
+      label: "Heavy fog",
+      detail: "Route intel and lane reads are muddy. Visibility calls stay worse through this whole shift.",
+      effectType: "intel_pressure",
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: /continue run/i })).toBeVisible();
+  await expect(page.getByText(/heavy fog/i).first()).toBeVisible();
+
+  await page.getByRole("button", { name: /continue run/i }).click();
+  await expect(page.getByText(/^modifier$/i)).toBeVisible();
+  await expect(page.getByText(/heavy fog/i).first()).toBeVisible();
+});
+
+test("next successful day generates the next day modifier", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.phase = "summary";
+    parsed.day = 2;
+    parsed.activeDayModifier = {
+      id: "ammo-shortage",
+      label: "Ammo shortage",
+      detail: "Magazine reserves are thin. High-burn calls need cleaner execution today.",
+      effectType: "resource_pressure",
+    };
+    parsed.combatBlueprint = null;
+    parsed.lastCombatSummary = {
+      status: "victory",
+      title: "Perimeter held",
+      detail: "All 3 wave groups were cleared before the line broke.",
+      rewardLabel: "+4 scrap, +2 food, +4 ammo",
+      wavesCleared: 3,
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+  await page.getByRole("button", { name: /advance to day 2/i }).click();
+
+  await expect(page.getByText(/^modifier$/i)).toBeVisible();
+  await expect(page.getByText(/ammo shortage/i).first()).toBeVisible();
+});
+
+test("ammo shortage modifier affects route planning copy and cost preview", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.activeDayModifier = {
+      id: "ammo-shortage",
+      label: "Ammo shortage",
+      detail: "Magazine reserves are thin. High-burn calls need cleaner execution today.",
+      effectType: "resource_pressure",
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await page.getByRole("button", { name: /market sweep/i }).click();
+  await expect(page.getByText(/high-burn calls need cleaner execution today/i)).toBeVisible();
+  await expect(page.getByText(/ammo shortage added \+1 ammo cost/i)).toBeVisible();
+});
+
+test("overcrowded infirmary modifier affects defense briefing copy", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.activeDayModifier = {
+      id: "overcrowded-infirmary",
+      label: "Overcrowded infirmary",
+      detail: "Recovery throughput is stressed. Rotation and treatment choices carry extra weight today.",
+      effectType: "recovery_pressure",
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/recovery throughput is stressed/i)).toBeVisible();
+  await expect(page.getByText(/post-defense recovery is less efficient today/i)).toBeVisible();
+});

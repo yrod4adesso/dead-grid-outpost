@@ -1,8 +1,14 @@
-export const GAME_VERSION = 9;
+export const GAME_VERSION = 10;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
 export type ThreatLevel = "Watching" | "Escalating" | "Critical" | "Breached";
+export type DayModifierId =
+  | "ration-strain"
+  | "ammo-shortage"
+  | "heavy-fog"
+  | "overcrowded-infirmary"
+  | "salvage-window";
 export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower";
 export type SurvivorRole = "fighter" | "scavenger" | "medic" | "builder";
 export type SurvivorAssignment = BuildingId | "defense" | null;
@@ -108,6 +114,13 @@ export type PendingConsequence = {
   reward?: Partial<Record<ResourceId, number>>;
 };
 
+export type DayModifier = {
+  id: DayModifierId;
+  label: string;
+  detail: string;
+  effectType: "resource_pressure" | "intel_pressure" | "recovery_pressure" | "salvage_boost";
+};
+
 export type ActivityLogEntry = {
   id: string;
   title: string;
@@ -181,6 +194,38 @@ export type BuildingStats = {
 };
 
 const THREAT_LEVELS: ThreatLevel[] = ["Watching", "Escalating", "Critical", "Breached"];
+const DAY_MODIFIER_ROTATION: DayModifier[] = [
+  {
+    id: "ration-strain",
+    label: "Ration strain",
+    detail: "Food reserves are tight today. Safer planning and slow pulls will feel more expensive.",
+    effectType: "resource_pressure",
+  },
+  {
+    id: "ammo-shortage",
+    label: "Ammo shortage",
+    detail: "Magazine reserves are thin. High-burn calls need cleaner execution today.",
+    effectType: "resource_pressure",
+  },
+  {
+    id: "heavy-fog",
+    label: "Heavy fog",
+    detail: "Route intel and lane reads are muddy. Visibility calls stay worse through this whole shift.",
+    effectType: "intel_pressure",
+  },
+  {
+    id: "overcrowded-infirmary",
+    label: "Overcrowded infirmary",
+    detail: "Recovery throughput is stressed. Rotation and treatment choices carry extra weight today.",
+    effectType: "recovery_pressure",
+  },
+  {
+    id: "salvage-window",
+    label: "Salvage window",
+    detail: "A narrow recovery window opened. Scrap opportunities are cleaner than usual for one day.",
+    effectType: "salvage_boost",
+  },
+];
 
 const MISSION_DIFFICULTY_MULTIPLIER: Record<Mission["difficulty"], number> = {
   low: 0.95,
@@ -204,6 +249,7 @@ export type DeadGridState = {
   lastSavedAt: string | null;
   lastSavedLabel: string;
   resources: ResourceCardState[];
+  activeDayModifier: DayModifier | null;
   buildings: BuildingState[];
   survivors: SurvivorState[];
   recruitPool: RecruitmentCandidate[];
@@ -504,6 +550,7 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
   lastSavedAt: null,
   lastSavedLabel: "No save yet",
   resources: buildInitialResources(),
+  activeDayModifier: generateDayModifier(1),
   buildings: INITIAL_BUILDINGS,
   survivors: INITIAL_SURVIVORS,
   recruitPool: generateRecruitPool(1, INITIAL_SURVIVORS.length),
@@ -534,6 +581,7 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
     ...structuredClone(DEFAULT_GAME_STATE),
     ...state,
     resources: state.resources ?? structuredClone(DEFAULT_GAME_STATE.resources),
+    activeDayModifier: state.activeDayModifier ?? generateDayModifier(state.day ?? DEFAULT_GAME_STATE.day),
     buildings: state.buildings ?? structuredClone(DEFAULT_GAME_STATE.buildings),
     survivors: state.survivors ?? structuredClone(DEFAULT_GAME_STATE.survivors),
     recruitPool: state.recruitPool ?? structuredClone(DEFAULT_GAME_STATE.recruitPool),
@@ -687,6 +735,7 @@ export function getMissionApproachOutcome(
   const reward = mergeRewards(baseReward, approach.rewardModifier);
   const cost = { ...(approach.cost ?? {}) };
   const bonuses: string[] = [];
+  const dayModifier = state.activeDayModifier;
 
   const missionTeam = state.survivors.filter((survivor) =>
     state.selectedMissionTeamIds.includes(survivor.id),
@@ -753,6 +802,33 @@ export function getMissionApproachOutcome(
       cost.food = (cost.food ?? 0) + 1;
       bonuses.push(`Fatigued route crew added +1 food strain`);
     }
+  }
+
+  if (dayModifier?.id === "ration-strain" && approach.label === "Careful pull") {
+    cost.food = (cost.food ?? 0) + 1;
+    bonuses.push("Ration strain added +1 food cost");
+  }
+
+  if (dayModifier?.id === "ammo-shortage" && approach.label === "Fast entry") {
+    cost.ammo = (cost.ammo ?? 0) + 1;
+    bonuses.push("Ammo shortage added +1 ammo cost");
+  }
+
+  if (dayModifier?.id === "heavy-fog") {
+    bonuses.push("Heavy fog degraded route intel");
+  }
+
+  if (
+    dayModifier?.id === "salvage-window" &&
+    (mission.kind === "scavenge" || mission.kind === "breach")
+  ) {
+    reward.scrap = (reward.scrap ?? 0) + 2;
+    bonuses.push("Salvage window added +2 scrap");
+  }
+
+  if (dayModifier?.id === "overcrowded-infirmary" && fatiguedMissionTeam.length > 0) {
+    cost.medicine = (cost.medicine ?? 0) + 1;
+    bonuses.push("Overcrowded infirmary added +1 medicine strain");
   }
 
   return {
@@ -1005,6 +1081,10 @@ export function startNightDefense(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
   const threatLevel = getThreatLevelForState(state);
   const waveModifier = getWaveModifierForThreat(threatLevel, state.day);
+  const dayModifier = state.activeDayModifier;
+  const effectiveHealingBonus =
+    dayModifier?.id === "overcrowded-infirmary" ? Math.max(0, stats.healingBonus - 1) : stats.healingBonus;
+  const rewardPreview = applyDayModifierToNightReward(getNightRewardPreview(state), dayModifier);
 
   return {
     ...state,
@@ -1015,21 +1095,27 @@ export function startNightDefense(state: DeadGridState): DeadGridState {
       baseHp: 120 + state.day * 6 + stats.assignedDefense * 6,
       playerHp: 90 + state.day * 4,
       damageMultiplier: stats.damageMultiplier,
-      healingBonus: stats.healingBonus,
+      healingBonus: effectiveHealingBonus,
       autoFireInterval: stats.autoFireInterval,
       manualCooldown: stats.manualCooldown,
       focusDuration: stats.focusDuration,
       shieldDuration: stats.shieldDuration,
       flarePrimaryDuration: stats.flarePrimaryDuration,
       flareSecondaryDuration: stats.flareSecondaryDuration,
-      reward: getNightRewardPreview(state),
+      reward: rewardPreview,
       enemyTypes: getEnemyTypesForThreat(threatLevel, state.day),
       waveModifier,
-      waveModifierLabel: getWaveModifierLabel(waveModifier, threatLevel),
-      lanePressureLabel: getLanePressureLabel(waveModifier, threatLevel),
+      waveModifierLabel: applyDayModifierToWaveLabel(
+        getWaveModifierLabel(waveModifier, threatLevel),
+        dayModifier,
+      ),
+      lanePressureLabel: applyDayModifierToLanePressure(
+        getLanePressureLabel(waveModifier, threatLevel),
+        dayModifier,
+      ),
       activePerkLabels: stats.activePerkLabels,
       supportCharges: {
-        medkit: 1 + Math.min(1, stats.healingBonus),
+        medkit: 1 + Math.min(1, effectiveHealingBonus),
         patch: 1 + Math.min(1, Math.floor(state.day / 4)),
         focus: 1 + Math.min(1, Math.floor(stats.assignedDefense / 2)),
         shield: 1 + Math.min(1, Math.floor(state.day / 3)),
@@ -1062,6 +1148,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
       ? shiftThreatLevel(getThreatLevelForDay(nextDay), pendingResolution.threatDelta)
       : "Breached",
     combatBlueprint: null,
+    activeDayModifier: victory ? generateDayModifier(nextDay) : state.activeDayModifier,
     survivors: recoverSurvivorsAfterNight(state.survivors, victory, stats.healingBonus),
     recruitPool: victory ? generateRecruitPool(nextDay, state.survivors.length) : state.recruitPool,
     selectedRecruitId: victory
@@ -1426,6 +1513,58 @@ export function getThreatDefensePressureLabel(threatLevel: ThreatLevel): string 
   }
 }
 
+export function getDayModifierForState(
+  state: Pick<DeadGridState, "day" | "activeDayModifier">,
+): DayModifier | null {
+  return state.activeDayModifier ?? generateDayModifier(state.day);
+}
+
+export function getDayModifierImpactSummary(modifier: DayModifier | null): string {
+  if (!modifier) {
+    return "No day modifier active.";
+  }
+
+  return modifier.detail;
+}
+
+export function getDayModifierMissionImpact(modifier: DayModifier | null): string {
+  if (!modifier) {
+    return "No route modifier active.";
+  }
+
+  switch (modifier.id) {
+    case "ration-strain":
+      return "Careful pulls cost extra food today.";
+    case "ammo-shortage":
+      return "Fast entry burns extra ammo today.";
+    case "heavy-fog":
+      return "Route intel is degraded and hostile reads are less reliable.";
+    case "overcrowded-infirmary":
+      return "Worn teams are harder to stabilize after the run.";
+    case "salvage-window":
+      return "Scavenge and breach routes can return bonus scrap today.";
+  }
+}
+
+export function getDayModifierDefenseImpact(modifier: DayModifier | null): string {
+  if (!modifier) {
+    return "No defense modifier active.";
+  }
+
+  switch (modifier.id) {
+    case "ration-strain":
+      return "Food pressure stays high even if the line holds.";
+    case "ammo-shortage":
+      return "Ammunition discipline matters more during defense prep.";
+    case "heavy-fog":
+      return "Visibility is poor. Lane reads and pressure calls stay murkier.";
+    case "overcrowded-infirmary":
+      return "Post-defense recovery is less efficient today.";
+    case "salvage-window":
+      return "If the line holds, salvage recovery should pay better than normal.";
+  }
+}
+
 export function formatAssignmentLabel(assignment: SurvivorAssignment) {
   switch (assignment) {
     case "workshop":
@@ -1733,6 +1872,10 @@ function buildInitialResources(): ResourceCardState[] {
   }));
 }
 
+function generateDayModifier(day: number): DayModifier {
+  return DAY_MODIFIER_ROTATION[(Math.max(day, 1) - 1) % DAY_MODIFIER_ROTATION.length];
+}
+
 function normalizeState(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
   const recruitPool = state.recruitPool ?? [];
@@ -1764,6 +1907,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
   return {
     ...state,
     threatLevel: getThreatLevelForState(state),
+    activeDayModifier: getDayModifierForState(state),
     recruitPool,
     dayEvents,
     pendingConsequences,
@@ -2067,6 +2211,55 @@ function applyWorkshopBonusToReward(
     ...reward,
     scrap: Math.round(reward.scrap * scrapYieldMultiplier),
   };
+}
+
+function applyDayModifierToNightReward(
+  reward: Partial<Record<ResourceId, number>>,
+  dayModifier: DayModifier | null,
+): Partial<Record<ResourceId, number>> {
+  if (!dayModifier) {
+    return reward;
+  }
+
+  if (dayModifier.id === "salvage-window") {
+    return {
+      ...reward,
+      scrap: (reward.scrap ?? 0) + 2,
+    };
+  }
+
+  if (dayModifier.id === "ration-strain") {
+    return {
+      ...reward,
+      food: Math.max(0, (reward.food ?? 0) - 1),
+    };
+  }
+
+  return reward;
+}
+
+function applyDayModifierToWaveLabel(label: string, dayModifier: DayModifier | null) {
+  if (dayModifier?.id === "heavy-fog") {
+    return `${label} // visibility loss persists`;
+  }
+
+  if (dayModifier?.id === "overcrowded-infirmary") {
+    return `${label} // triage support reduced`;
+  }
+
+  return label;
+}
+
+function applyDayModifierToLanePressure(label: string, dayModifier: DayModifier | null) {
+  if (dayModifier?.id === "heavy-fog") {
+    return `${label} Visibility remains patchy across all lanes.`;
+  }
+
+  if (dayModifier?.id === "ammo-shortage") {
+    return `${label} Resupply discipline is tighter than usual.`;
+  }
+
+  return label;
 }
 
 function invertReward(reward: Partial<Record<ResourceId, number>>) {
