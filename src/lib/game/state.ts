@@ -346,6 +346,17 @@ const MISSION_BLUEPRINTS: Array<{
     enemyHint: "Mostly walkers",
   },
   {
+    kind: "scavenge",
+    routeRole: "support",
+    title: "Shelter Run",
+    zonePrefix: "Grid F",
+    description: "Pull sealed food tins and blankets from a half-collapsed shelter corridor before looters loop back.",
+    reward: { food: 5, medicine: 1, scrap: 1 },
+    risk: "Tight interior lanes",
+    duration: "50 min",
+    enemyHint: "Walkers in clusters",
+  },
+  {
     kind: "rescue",
     routeRole: "rescue",
     title: "Clinic Cache",
@@ -355,6 +366,17 @@ const MISSION_BLUEPRINTS: Array<{
     risk: "Fast approach lanes",
     duration: "60 min",
     enemyHint: "Runners reported",
+  },
+  {
+    kind: "rescue",
+    routeRole: "rescue",
+    title: "Signal Tower Extract",
+    zonePrefix: "Grid A",
+    description: "Push to a broken relay tower and pull trapped survivors plus med crates before the signal fire dies.",
+    reward: { medicine: 4, food: 2, ammo: 1 },
+    risk: "Open rooftop exposure",
+    duration: "65 min",
+    enemyHint: "Runners and walkers below",
   },
   {
     kind: "breach",
@@ -368,6 +390,17 @@ const MISSION_BLUEPRINTS: Array<{
     enemyHint: "Brutes possible",
   },
   {
+    kind: "breach",
+    routeRole: "high_yield",
+    title: "Freight Lockdown",
+    zonePrefix: "Grid H",
+    description: "Crack open a jammed freight pen and strip machine parts before the noise wakes the whole corridor.",
+    reward: { scrap: 8, ammo: 3, food: 1 },
+    risk: "Alarm-prone shell",
+    duration: "70 min",
+    enemyHint: "Brutes and runners near the choke",
+  },
+  {
     kind: "cache",
     routeRole: "threat_control",
     title: "Supply Cache",
@@ -377,6 +410,17 @@ const MISSION_BLUEPRINTS: Array<{
     risk: "Broken sightlines",
     duration: "55 min",
     enemyHint: "Mixed walkers and runners",
+  },
+  {
+    kind: "cache",
+    routeRole: "threat_control",
+    title: "Checkpoint Sweep",
+    zonePrefix: "Grid G",
+    description: "Clear an old checkpoint lane, secure leftover crates, and cut pursuit lines before dusk stacks pressure.",
+    reward: { ammo: 3, food: 3, scrap: 1 },
+    risk: "Exposed approach lane",
+    duration: "55 min",
+    enemyHint: "Walkers screening the lane",
   },
 ];
 
@@ -433,9 +477,39 @@ const DAY_EVENT_BLUEPRINTS: Array<{
       reward: { ammo: 3 },
     },
   },
+  {
+    title: "Flooded underpass",
+    detail: "Storm runoff has flooded a low underpass. There may be sealed crates in the waterline if someone moves before dusk.",
+    risk: "Cold exposure",
+    rewardChoice: {
+      label: "Wade in",
+      effectLabel: "+scrap and food, but leaves recovery pressure tomorrow",
+      reward: { scrap: 4, food: 2 },
+    },
+    safeChoice: {
+      label: "Hook the top crates",
+      effectLabel: "+ammo and safer return",
+      reward: { ammo: 2, food: 1 },
+    },
+  },
+  {
+    title: "Rooftop signal nest",
+    detail: "A scavenger beacon is pulsing from a rooftop nest. It could reveal a clean route corridor or draw unwanted eyes.",
+    risk: "Line-of-sight exposure",
+    rewardChoice: {
+      label: "Climb and mark routes",
+      effectLabel: "+ammo and medicine, lowers tomorrow pressure",
+      reward: { ammo: 2, medicine: 2 },
+    },
+    safeChoice: {
+      label: "Stay below the skyline",
+      effectLabel: "+food and steady supplies",
+      reward: { food: 2, scrap: 1 },
+    },
+  },
 ];
 
-const INITIAL_TASKS: OutpostTask[] = [
+const TASK_BLUEPRINTS: OutpostTask[] = [
   {
     id: "ration-sort",
     title: "Sort ration stock",
@@ -462,6 +536,24 @@ const INITIAL_TASKS: OutpostTask[] = [
     duration: "25 min",
     rewardLabel: "+2 medicine, +1 food",
     reward: { medicine: 2, food: 1 },
+  },
+  {
+    id: "barrier-patch",
+    title: "Patch barrier seams",
+    description: "Bolt fresh plating across stress fractures before tonight's lane pressure finds the weak points.",
+    owner: "Builder Oren",
+    duration: "30 min",
+    rewardLabel: "+2 scrap, +1 ammo",
+    reward: { scrap: 2, ammo: 1 },
+  },
+  {
+    id: "signal-relay",
+    title: "Tune signal relay",
+    description: "Retune the rooftop relay so runner crews can pass cleaner route pings through the static.",
+    owner: "Scout Inez",
+    duration: "18 min",
+    rewardLabel: "+2 scrap, +1 medicine",
+    reward: { scrap: 2, medicine: 1 },
   },
 ];
 
@@ -589,7 +681,7 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
     .slice(0, 2)
     .map((survivor) => survivor.id),
   selectedTreatmentIds: [],
-  selectedTaskId: INITIAL_TASKS[0].id,
+  selectedTaskId: generateTaskSet(1)[0].id,
   selectedRecruitId: generateRecruitPool(1, INITIAL_SURVIVORS.length)[0].id,
   selectedEventId: generateDayEvents(1)[0].id,
   lastSavedAt: null,
@@ -602,7 +694,7 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
   recruitPool: generateRecruitPool(1, INITIAL_SURVIVORS.length),
   dayEvents: generateDayEvents(1),
   missions: generateMissionSet(1),
-  tasks: INITIAL_TASKS,
+  tasks: generateTaskSet(1),
   pendingConsequences: [],
   activityLog: INITIAL_ACTIVITY_LOG,
   objectives: INITIAL_OBJECTIVES,
@@ -638,7 +730,7 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
         ...mission,
         routeRole: mission.routeRole ?? getRouteRoleForMissionKind(mission.kind),
       })) ?? structuredClone(DEFAULT_GAME_STATE.missions),
-    tasks: state.tasks ?? structuredClone(DEFAULT_GAME_STATE.tasks),
+    tasks: state.tasks ?? generateTaskSet(state.day ?? DEFAULT_GAME_STATE.day),
     pendingConsequences: state.pendingConsequences ?? [],
     activityLog: state.activityLog ?? structuredClone(DEFAULT_GAME_STATE.activityLog),
     objectives: state.objectives ?? structuredClone(DEFAULT_GAME_STATE.objectives),
@@ -1229,6 +1321,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
   const victory = outcome.status === "victory";
   const stats = getDerivedStats(state.buildings, state.survivors);
   const nextDay = victory ? state.day + 1 : state.day;
+  const nextTasks = victory ? generateTaskSet(nextDay) : state.tasks;
   const resolvedSpecialNight = state.activeSpecialNight;
   const pendingResolution = victory
     ? resolvePendingConsequencesForDay(state.pendingConsequences, nextDay)
@@ -1254,6 +1347,8 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
     selectedEventId: victory ? generateDayEvents(nextDay)[0]?.id ?? state.selectedEventId : state.selectedEventId,
     missions: victory ? generateMissionSet(nextDay) : state.missions,
     selectedMissionId: victory ? generateMissionSet(nextDay)[0].id : state.selectedMissionId,
+    tasks: nextTasks,
+    selectedTaskId: victory ? nextTasks[0]?.id ?? state.selectedTaskId : state.selectedTaskId,
     pendingConsequences: pendingResolution.remaining,
   };
 
@@ -1747,8 +1842,26 @@ export function getTraitEffectLabel(trait: string) {
 
 function generateMissionSet(day: number): Mission[] {
   const threatLevel = getThreatLevelForDay(day);
+  const routeRoleOrder = selectRotatingEntries<RouteRole>(
+    ["support", "rescue", "high_yield", "threat_control"],
+    4,
+    day,
+    3,
+  );
+  const routeRoleBlueprintOffset: Record<RouteRole, number> = {
+    support: 0,
+    rescue: 1,
+    high_yield: 0,
+    threat_control: 1,
+  };
+  const selectedBlueprints = routeRoleOrder.map((routeRole) => {
+    const blueprintsForRole = MISSION_BLUEPRINTS.filter((blueprint) => blueprint.routeRole === routeRole);
+    return blueprintsForRole[
+      (Math.max(day, 1) - 1 + routeRoleBlueprintOffset[routeRole]) % blueprintsForRole.length
+    ];
+  });
 
-  return MISSION_BLUEPRINTS.map((blueprint, index) => {
+  return selectedBlueprints.map((blueprint, index) => {
     const difficulty = getMissionDifficulty(day, index);
     const zoneNumber = ((day + index) % 6) + 1;
     const missionId = `${blueprint.kind}-${day}-${index}`;
@@ -1945,7 +2058,9 @@ function extendRecruitPool(
 }
 
 function generateDayEvents(day: number): DayEvent[] {
-  return DAY_EVENT_BLUEPRINTS.slice(0, 2).map((blueprint, index) => ({
+  const selectedBlueprints = selectRotatingEntries(DAY_EVENT_BLUEPRINTS, 2, day, 2);
+
+  return selectedBlueprints.map((blueprint, index) => ({
     id: `event-${day}-${index}`,
     title: blueprint.title,
     detail: blueprint.detail,
@@ -2057,6 +2172,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
   const stats = getDerivedStats(state.buildings, state.survivors);
   const recruitPool = state.recruitPool ?? [];
   const dayEvents = state.dayEvents ?? [];
+  const tasks = state.tasks ?? [];
   const pendingConsequences = state.pendingConsequences ?? [];
   const treatmentSlots = getInfirmaryTreatmentSlotCount(state.buildings);
   const selectedRecruitId =
@@ -2067,6 +2183,10 @@ function normalizeState(state: DeadGridState): DeadGridState {
     dayEvents.some((event) => event.id === state.selectedEventId)
       ? state.selectedEventId
       : (dayEvents[0]?.id ?? "");
+  const selectedTaskId =
+    tasks.some((task) => task.id === state.selectedTaskId)
+      ? state.selectedTaskId
+      : (tasks[0]?.id ?? "");
   const selectedTreatmentIds = (state.selectedTreatmentIds ?? [])
     .filter((id) => state.survivors.some((survivor) => survivor.id === id && survivor.status !== "ready"))
     .slice(0, treatmentSlots);
@@ -2089,7 +2209,9 @@ function normalizeState(state: DeadGridState): DeadGridState {
       state.activeSpecialNight ?? generateSpecialNight(state.day, getThreatLevelForState(state), pendingConsequences),
     recruitPool,
     dayEvents,
+    tasks,
     pendingConsequences,
+    selectedTaskId,
     selectedMissionTeamIds,
     selectedTreatmentIds,
     selectedRecruitId,
@@ -2648,6 +2770,38 @@ function rotateTask(tasks: OutpostTask[], resolvedId: string): OutpostTask[] {
   });
 }
 
+function generateTaskSet(day: number): OutpostTask[] {
+  return selectRotatingEntries(TASK_BLUEPRINTS, 3, day, 2).map((task) => structuredClone(task));
+}
+
+function selectRotatingEntries<T>(pool: T[], count: number, seedDay: number, step = 1): T[] {
+  if (pool.length === 0 || count <= 0) {
+    return [];
+  }
+
+  const safeCount = Math.min(count, pool.length);
+  const normalizedSeed = Math.max(seedDay, 1) - 1;
+  const safeStep = Math.max(step, 1);
+  const selected: T[] = [];
+  const usedIndices = new Set<number>();
+  let cursor = normalizedSeed % pool.length;
+
+  while (selected.length < safeCount) {
+    if (!usedIndices.has(cursor)) {
+      selected.push(pool[cursor]);
+      usedIndices.add(cursor);
+    }
+
+    cursor = (cursor + safeStep) % pool.length;
+
+    while (usedIndices.has(cursor) && usedIndices.size < pool.length) {
+      cursor = (cursor + 1) % pool.length;
+    }
+  }
+
+  return selected;
+}
+
 function createPendingEventConsequence(
   event: DayEvent,
   choice: DayEventChoice,
@@ -2684,6 +2838,62 @@ function createPendingEventConsequence(
     };
   }
 
+  if (event.title === "Flooded underpass" && isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Cold recovery backlog",
+      detail: "The soaked pull strains tomorrow's infirmary and adds a small medicine burden to recovery.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { medicine: 1 },
+    };
+  }
+
+  if (event.title === "Flooded underpass" && !isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Dry crate reserve",
+      detail: "The safer pull leaves a tidy reserve package for the next day.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { food: 1, ammo: 1 },
+    };
+  }
+
+  if (event.title === "Rooftop signal nest" && isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Marked quiet corridor",
+      detail: "The rooftop mark trims tomorrow's pursuit pressure and gives the board a cleaner next-day read.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: -1,
+    };
+  }
+
+  if (event.title === "Rooftop signal nest" && !isRiskyChoice) {
+    return {
+      id: `pending-event-${event.id}`,
+      sourceType: "event",
+      sourceTitle: event.title,
+      label: "Low skyline stockpile",
+      detail: "The lower-risk pull leaves a modest support package for tomorrow's planners.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { food: 2, scrap: 1 },
+    };
+  }
+
   if (isRiskyChoice) {
     return {
       id: `pending-event-${event.id}`,
@@ -2713,6 +2923,34 @@ function createPendingEventConsequence(
 
 function createPendingTaskConsequence(task: OutpostTask, day: number): PendingConsequence | null {
   const triggerDay = day + 1;
+
+  if (task.id === "barrier-patch") {
+    return {
+      id: `pending-task-${task.id}-${day}`,
+      sourceType: "task",
+      sourceTitle: task.title,
+      label: "Shored lane plating",
+      detail: "Fresh plating buys the next barricade cycle a little breathing room and trims tomorrow's threat pressure.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "threat_shift",
+      threatDelta: -1,
+    };
+  }
+
+  if (task.id === "signal-relay") {
+    return {
+      id: `pending-task-${task.id}-${day}`,
+      sourceType: "task",
+      sourceTitle: task.title,
+      label: "Courier route ping",
+      detail: "The tuned relay leaves a small route-support package waiting for tomorrow's planners.",
+      triggerDay,
+      timing: "next_day",
+      effectType: "resource_bundle",
+      reward: { ammo: 1, food: 1 },
+    };
+  }
 
   if (task.id === "ammo-tally") {
     return {
