@@ -537,6 +537,155 @@ test("rescue routes can widen the recruitment board", async ({ page }) => {
   expect(widenedRecruitCount).toBeGreaterThan(initialRecruitCount);
 });
 
+test("new recruit trait profiles surface on the board and persist after recruiting", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.recruitPool = [
+      {
+        id: "recruit-custom-field-stitch",
+        name: "Hale",
+        role: "medic",
+        trait: "Field stitch",
+        profileTag: "Recovery specialist",
+        cost: { food: 3, medicine: 3 },
+        bonusLabel: "Best assigned to rescue support and infirmary recovery.",
+        availability: "Relay clinic // day 2",
+      },
+      ...parsed.recruitPool.slice(0, 2),
+    ];
+    parsed.selectedRecruitId = "recruit-custom-field-stitch";
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await page.getByRole("button", { name: /recruit hale, medic/i }).click();
+  await expect(page.getByText(/field stitch/i).first()).toBeVisible();
+  await expect(page.getByText(/\+1 medicine on rescue missions/i)).toBeVisible();
+
+  await page.getByRole("button", { name: /recruit survivor/i }).click();
+  await expect(page.getByText(/recruit joined: hale/i)).toBeVisible();
+  await expect(page.getByText(/hale/i).first()).toBeVisible();
+  await expect(page.getByText(/\+1 medicine on rescue missions/i)).toBeVisible();
+});
+
+test("later-run recruit profiles surface as higher-impact candidates", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.day = 5;
+    parsed.recruitPool = [
+      {
+        id: "recruit-custom-turret-tuner",
+        name: "Vera",
+        role: "builder",
+        trait: "Turret tuner",
+        profileTag: "Structure specialist",
+        cost: { food: 6, scrap: 8, ammo: 2 },
+        bonusLabel: "Best assigned to Watchtower or Storage for stronger structural control. Specialist pull.",
+        availability: "Watchline annex // day 5 // late pressure",
+      },
+      ...parsed.recruitPool.slice(0, 2),
+    ];
+    parsed.selectedRecruitId = "recruit-custom-turret-tuner";
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  const veraCard = page.getByRole("button", { name: /recruit vera, builder/i });
+  await veraCard.click();
+  await expect(veraCard.getByText(/high-impact candidate/i)).toBeVisible();
+  await expect(veraCard.getByText(/structure specialist/i)).toBeVisible();
+  await expect(
+    veraCard.getByText(/best assigned to watchtower or storage for stronger structural control\. specialist pull\./i),
+  ).toBeVisible();
+  await expect(veraCard.getByText(/watchline annex \/\/ day 5 \/\/ late pressure/i)).toBeVisible();
+});
+
+test("system hooks surface calmer triage slots and quiet-step mission edges", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.survivors = parsed.survivors.map((survivor: { id: string; trait: string; assignment: string | null; status: string }) => {
+      if (survivor.id === "survivor-rune") {
+        return { ...survivor, trait: "Calm triage", assignment: "infirmary", status: "ready" };
+      }
+
+      if (survivor.id === "survivor-vale") {
+        return { ...survivor, trait: "Quiet step", assignment: "workshop", status: "ready" };
+      }
+
+      return survivor;
+    });
+    parsed.selectedMissionTeamIds = ["survivor-vale"];
+    parsed.missions = [
+      {
+        id: "support-hook-test",
+        title: "Market Sweep // Quiet Window",
+        zone: "Grid B-2",
+        difficulty: "medium",
+        kind: "scavenge",
+        routeRole: "support",
+        description: "Sweep a low-noise market lane before dusk traffic closes the route.",
+        rewardLabel: "+4 food, +2 scrap",
+        risk: "Close alleys",
+        duration: "45 min",
+        enemyHint: "Mostly walkers // pressure climbing",
+        reward: { food: 4, scrap: 2 },
+        approaches: parsed.missions[0].approaches.map((approach: { id: string; label: string; detail: string; rewardModifier: Record<string, number>; cost: Record<string, number> }, index: number) => ({
+          ...approach,
+          id: `support-hook-test-${index === 0 ? "fast" : "careful"}`,
+        })),
+      },
+      ...parsed.missions.slice(1),
+    ];
+    parsed.selectedMissionId = "support-hook-test";
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /continue run/i }).click();
+
+  await expect(page.getByText(/infirmary auto-treatment slots: 2/i)).toBeVisible();
+  await page.getByRole("button", { name: /market sweep \/\/ quiet window/i }).click();
+  await expect(page.getByText(/crew edge: quiet step crew can steady support pulls and reduce food burn/i)).toBeVisible();
+  await expect(page.getByText(/quiet step cut support food cost by 1/i)).toBeVisible();
+});
+
 test("special night persists across reload and is surfaced in the defense briefing", async ({ page }) => {
   await page.goto("/");
 

@@ -563,6 +563,7 @@ export function DeadGridApp() {
                       }
                       detailItems={[
                         ["Role", selectedRecruit?.role ?? "None"],
+                        ["Profile", selectedRecruit?.profileTag ?? "None"],
                         ["Cost", formatRewardBundle(selectedRecruit?.cost ?? {})],
                         ["Window", selectedRecruit?.availability ?? "N/A"],
                       ]}
@@ -1378,6 +1379,12 @@ function RecruitCard({
       <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[var(--accent-soft)]">
         {getTraitEffectLabel(candidate.trait)}
       </p>
+      <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--signal)]">
+        {candidate.profileTag}
+      </p>
+      <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/40">
+        {candidate.availability.includes("late pressure") ? "High-impact candidate" : "Routine candidate"}
+      </p>
       <p className="mt-2 text-sm text-white/50">{candidate.bonusLabel}</p>
       <p className="mt-4 text-sm font-medium text-[var(--accent-soft)]">
         {formatRewardBundle(candidate.cost)}
@@ -1553,6 +1560,7 @@ function MissionSelectionPanel({
   const dayModifierImpact = getDayModifierMissionImpact(state.activeDayModifier);
   const routeRoleLabel = getRouteRoleLabel(mission.routeRole);
   const routeRoleSummary = getRouteRoleSummary(mission.routeRole);
+  const crewEdges = describeMissionCrewEdges(mission, selectedTeam);
 
   return (
     <div className="rounded-[1.6rem] border border-white/10 bg-black/25 p-5">
@@ -1619,6 +1627,11 @@ function MissionSelectionPanel({
           <span className="font-medium text-white">{state.activeDayModifier?.label ?? "No modifier"}:</span>{" "}
           {dayModifierImpact}
         </div>
+        {crewEdges.length > 0 ? (
+          <div className="rounded-2xl border border-[var(--signal)]/20 bg-[rgba(73,183,172,0.08)] px-4 py-3 text-sm text-white/70">
+            <span className="font-medium text-white">Crew edge:</span> {crewEdges.join(" // ")}
+          </div>
+        ) : null}
         {fatiguedTeam.length > 0 ? (
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-100">
             Worn crew selected: {fatiguedTeam.map((survivor) => survivor.name).join(", ")}. Route costs and fallout will hit harder.
@@ -1830,6 +1843,35 @@ function describeMissionTeamPressure(team: DeadGridState["survivors"]) {
   }
 
   return `${fatiguedCount} worn / ${readyCount} fresh`;
+}
+
+function describeMissionCrewEdges(
+  mission: Mission,
+  team: DeadGridState["survivors"],
+) {
+  const readyTeam = team.filter((survivor) => survivor.status === "ready");
+  const edges: string[] = [];
+
+  if (
+    mission.routeRole === "support" &&
+    readyTeam.some((survivor) => survivor.trait === "Quiet step")
+  ) {
+    edges.push("Quiet step crew can steady support pulls and reduce food burn");
+  }
+
+  if (mission.kind === "rescue" && readyTeam.some((survivor) => survivor.trait === "Field stitch")) {
+    edges.push("Field stitch crew can pull extra medicine from rescue routes");
+  }
+
+  if (mission.kind === "breach" && readyTeam.some((survivor) => survivor.trait === "Frame welder")) {
+    edges.push("Frame welder crew can recover extra breach scrap");
+  }
+
+  if (readyTeam.some((survivor) => survivor.trait === "Route memory")) {
+    edges.push("Route memory improves careful pull efficiency");
+  }
+
+  return edges;
 }
 
 function describeDefenseRosterPressure(state: DeadGridState) {

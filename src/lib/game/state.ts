@@ -82,6 +82,7 @@ export type RecruitmentCandidate = {
   name: string;
   role: SurvivorRole;
   trait: string;
+  profileTag: string;
   cost: Partial<Record<ResourceId, number>>;
   bonusLabel: string;
   availability: string;
@@ -777,7 +778,10 @@ export function toggleTreatmentPriority(state: DeadGridState, survivorId: string
 }
 
 export function getTreatmentSlotCount(state: Pick<DeadGridState, "buildings">) {
-  return getInfirmaryTreatmentSlotCount(state.buildings);
+  return getInfirmaryTreatmentSlotCount(
+    state.buildings,
+    "survivors" in state ? (state as Pick<DeadGridState, "survivors">).survivors : [],
+  );
 }
 
 export function resolveSelectedMission(state: DeadGridState): DeadGridState {
@@ -908,19 +912,42 @@ export function getMissionApproachOutcome(
     bonuses.push("Scavenger added +1 scrap");
   }
 
-  if (activeMissionTeam.some((survivor) => survivor.trait === "Salvage nose" || survivor.trait === "Scrap hound")) {
+  if (
+    activeMissionTeam.some(
+      (survivor) => survivor.trait === "Salvage nose" || survivor.trait === "Scrap hound",
+    )
+  ) {
     reward.scrap = (reward.scrap ?? 0) + 1;
     bonuses.push("Trait added +1 scrap");
   }
 
-  if (approach.label === "Careful pull" && activeMissionTeam.some((survivor) => survivor.trait === "Route memory")) {
+  if (
+    approach.label === "Careful pull" &&
+    activeMissionTeam.some((survivor) => survivor.trait === "Route memory")
+  ) {
     reward.food = (reward.food ?? 0) + 1;
     bonuses.push("Route memory added +1 food");
+  }
+
+  if (
+    mission.routeRole === "support" &&
+    approach.label === "Careful pull" &&
+    activeMissionTeam.some((survivor) => survivor.trait === "Quiet step")
+  ) {
+    reward.food = (reward.food ?? 0) + 1;
+    cost.food = Math.max(0, (cost.food ?? 0) - 1);
+    bonuses.push("Quiet step added +1 support food");
+    bonuses.push("Quiet step cut support food cost by 1");
   }
 
   if (mission.kind === "rescue" && hasMedic) {
     reward.medicine = (reward.medicine ?? 0) + 1;
     bonuses.push("Medic added +1 medicine");
+  }
+
+  if (mission.kind === "rescue" && activeMissionTeam.some((survivor) => survivor.trait === "Field stitch")) {
+    reward.medicine = (reward.medicine ?? 0) + 1;
+    bonuses.push("Field stitch added +1 rescue medicine");
   }
 
   if (approach.label === "Fast entry" && hasFighter) {
@@ -943,7 +970,10 @@ export function getMissionApproachOutcome(
     bonuses.push("Builder recovered +1 scrap");
   }
 
-  if (mission.kind === "breach" && activeMissionTeam.some((survivor) => survivor.trait === "Frame welder")) {
+  if (
+    mission.kind === "breach" &&
+    activeMissionTeam.some((survivor) => survivor.trait === "Frame welder")
+  ) {
     reward.scrap = (reward.scrap ?? 0) + 1;
     bonuses.push("Frame welder added +1 scrap");
   }
@@ -1200,7 +1230,7 @@ export function recruitSurvivor(state: DeadGridState): DeadGridState {
     activityLog: [
       createLogEntry(
         `Recruit joined: ${candidate.name}`,
-        `${candidate.name} entered the outpost as a ${candidate.role}. ${candidate.bonusLabel}`,
+        `${candidate.name} entered the outpost as a ${candidate.profileTag.toLowerCase()} (${candidate.role}). ${candidate.bonusLabel}`,
       ),
       ...state.activityLog.slice(0, 5),
     ],
@@ -1585,7 +1615,7 @@ export function getDerivedStats(
     0.42 -
     Math.min(0.08, (watchtowerLevel - 1) * 0.015) -
     Math.min(0.03, watchtowerCrew * 0.01) -
-    (readySurvivors.some((survivor) => survivor.trait === "Cable eye") ? 0.015 : 0);
+    getTraitAutoFireBonus(readySurvivors.map((survivor) => survivor.trait));
   const manualCooldown =
     0.75 -
     Math.min(0.12, defenseCrew * 0.025) -
@@ -1593,11 +1623,11 @@ export function getDerivedStats(
   const focusDuration =
     5.5 +
     Math.min(1.2, (watchtowerLevel - 1) * 0.25) +
-    (readySurvivors.some((survivor) => survivor.trait === "Lane anchor") ? 0.5 : 0);
+    getTraitFocusBonus(readySurvivors.map((survivor) => survivor.trait));
   const shieldDuration =
     6 +
     Math.min(1.4, defenseCrew * 0.3) +
-    (readySurvivors.some((survivor) => survivor.trait === "Wall hold") ? 0.7 : 0);
+    getTraitShieldBonus(readySurvivors.map((survivor) => survivor.trait));
   const flarePrimaryDuration =
     4.8 +
     Math.min(1, infirmaryLevel * 0.15) +
@@ -1616,8 +1646,14 @@ export function getDerivedStats(
     readySurvivors.some((survivor) => survivor.trait === "Wall hold")
       ? "Wall hold: stronger shield duration"
       : null,
+    readySurvivors.some((survivor) => survivor.trait === "Shock brace")
+      ? "Shock brace: reinforced shield window"
+      : null,
     readySurvivors.some((survivor) => survivor.trait === "Cable eye")
       ? "Cable eye: sharper watchtower cadence"
+      : null,
+    readySurvivors.some((survivor) => survivor.trait === "Turret tuner")
+      ? "Turret tuner: steadier watchtower cadence"
       : null,
   ].filter((entry): entry is string => Boolean(entry));
 
@@ -1816,25 +1852,38 @@ export function getTraitEffectLabel(trait: string) {
       return "+1 mission scrap on scavenging routes";
     case "Route memory":
       return "+1 food on careful mission pulls";
+    case "Quiet step":
+      return "+1 food on support-route careful pulls";
     case "Light touch":
       return "-1 ammo on fast mission entry";
     case "Steady hands":
     case "Dose keeper":
+    case "Calm triage":
       return "-1 treatment medicine when active in infirmary";
     case "Fast hands":
       return "+1 infirmary recovery";
+    case "Field stitch":
+      return "+1 medicine on rescue missions";
     case "Cold aim":
       return "+0.05 defense damage";
     case "Wall hold":
       return "+0.03 defense damage";
+    case "Lane anchor":
+      return "+0.5 focus duration";
+    case "Shock brace":
+      return "+0.5 shield duration";
     case "Breach runner":
       return "-1 ammo on breach-style fast entry";
     case "Frame welder":
       return "+1 breach scrap";
     case "Cable eye":
       return "+0.04 watchtower damage";
+    case "Turret tuner":
+      return "Faster watchtower auto-fire";
     case "Rig calm":
       return "+5 storage limit";
+    case "Rig specialist":
+      return "+4 storage limit, +0.02 defense damage";
     default:
       return "Trait active in role-specific situations";
   }
@@ -2031,15 +2080,17 @@ function generateRecruitPool(day: number, survivorCount: number): RecruitmentCan
   return Array.from({ length: 3 }, (_, index) => {
     const role = roleCycle[(day + survivorCount + index) % roleCycle.length];
     const name = names[(day * 2 + survivorCount + index) % names.length];
+    const profile = getRecruitProfile(role, day, index);
 
     return {
       id: `recruit-${day}-${survivorCount}-${index}`,
       name,
       role,
-      trait: getRecruitTrait(role, day, index),
-      cost: getRecruitCost(role, day, index),
-      bonusLabel: getRecruitBonusLabel(role),
-      availability: getRecruitAvailability(day, index),
+      trait: profile.trait,
+      profileTag: profile.profileTag,
+      cost: profile.cost,
+      bonusLabel: profile.bonusLabel,
+      availability: profile.availability,
     };
   });
 }
@@ -2095,33 +2146,105 @@ function getRecruitCost(role: SurvivorRole, day: number, index: number): Partial
   }
 }
 
+function getRecruitProfile(role: SurvivorRole, day: number, index: number) {
+  const trait = getRecruitTrait(role, day, index);
+  const specialistBand = day >= 4 && index === 2;
+  const cost = getRecruitCost(role, day, index);
+
+  if (specialistBand) {
+    return {
+      trait,
+      profileTag: getRecruitProfileTag(role, trait, true),
+      cost: {
+        ...cost,
+        food: (cost.food ?? 0) + 1,
+        [role === "fighter" ? "ammo" : role === "medic" ? "medicine" : "scrap"]:
+          ((role === "fighter" ? cost.ammo : role === "medic" ? cost.medicine : cost.scrap) ?? 0) + 1,
+      },
+      bonusLabel: getRecruitBonusLabel(role, trait, true),
+      availability: getRecruitAvailability(day, index, true),
+    };
+  }
+
+  return {
+    trait,
+    profileTag: getRecruitProfileTag(role, trait, false),
+    cost,
+    bonusLabel: getRecruitBonusLabel(role, trait, false),
+    availability: getRecruitAvailability(day, index, false),
+  };
+}
+
+function getRecruitProfileTag(role: SurvivorRole, trait: string, specialist: boolean) {
+  if (specialist) {
+    switch (role) {
+      case "fighter":
+        return "Defense specialist";
+      case "scavenger":
+        return trait === "Quiet step" ? "Support specialist" : "Route specialist";
+      case "medic":
+        return "Recovery specialist";
+      case "builder":
+        return "Structure specialist";
+    }
+  }
+
+  switch (role) {
+    case "fighter":
+      return "Frontline recruit";
+    case "scavenger":
+      return "Route recruit";
+    case "medic":
+      return "Recovery recruit";
+    case "builder":
+      return "Structure recruit";
+  }
+}
+
 function getRecruitTrait(role: SurvivorRole, day: number, index: number) {
   const traits: Record<SurvivorRole, string[]> = {
-    fighter: ["Breach runner", "Cold aim", "Wall hold"],
-    scavenger: ["Route memory", "Light touch", "Scrap hound"],
-    medic: ["Calm triage", "Fast hands", "Dose keeper"],
-    builder: ["Frame welder", "Cable eye", "Rig calm"],
+    fighter: ["Breach runner", "Cold aim", "Wall hold", "Lane anchor", "Shock brace"],
+    scavenger: ["Salvage nose", "Route memory", "Light touch", "Scrap hound", "Quiet step"],
+    medic: ["Steady hands", "Fast hands", "Dose keeper", "Calm triage", "Field stitch"],
+    builder: ["Frame welder", "Cable eye", "Rig calm", "Rig specialist", "Turret tuner"],
   };
 
   return traits[role][(day + index) % traits[role].length];
 }
 
-function getRecruitBonusLabel(role: SurvivorRole) {
+function getRecruitBonusLabel(role: SurvivorRole, trait: string, specialist: boolean) {
+  const specialistTag = specialist ? " Specialist pull." : "";
+
   switch (role) {
     case "fighter":
-      return "Best assigned to Night Defense for stronger lane pressure.";
+      if (trait === "Lane anchor" || trait === "Shock brace") {
+        return `Best assigned to Night Defense for steadier frontline control.${specialistTag}`;
+      }
+      return `Best assigned to Night Defense for stronger lane pressure.${specialistTag}`;
     case "scavenger":
-      return "Best assigned to the Workshop for better scrap yield.";
+      if (trait === "Quiet step" || trait === "Route memory") {
+        return `Best routed through support missions and the Workshop economy.${specialistTag}`;
+      }
+      return `Best assigned to the Workshop for better scrap yield.${specialistTag}`;
     case "medic":
-      return "Best assigned to the Infirmary for stronger recovery.";
+      if (trait === "Field stitch" || trait === "Calm triage") {
+        return `Best assigned to rescue support and infirmary recovery.${specialistTag}`;
+      }
+      return `Best assigned to the Infirmary for stronger recovery.${specialistTag}`;
     case "builder":
-      return "Best assigned to Storage or the Watchtower for structural bonuses.";
+      if (trait === "Turret tuner" || trait === "Rig specialist") {
+        return `Best assigned to Watchtower or Storage for stronger structural control.${specialistTag}`;
+      }
+      return `Best assigned to Storage or the Watchtower for structural bonuses.${specialistTag}`;
   }
 }
 
-function getRecruitAvailability(day: number, index: number) {
-  const windows = ["Holding gate", "Transit shelter", "Storm drain camp", "Supply checkpoint"];
-  return `${windows[(day + index) % windows.length]} // day ${day}`;
+function getRecruitAvailability(day: number, index: number, specialist: boolean) {
+  const windows = specialist
+    ? ["Relay clinic", "Fortified stairwell", "Watchline annex", "Signal tower camp"]
+    : ["Holding gate", "Transit shelter", "Storm drain camp", "Supply checkpoint"];
+  const pressureLabel = day >= 4 ? "late pressure" : day >= 2 ? "mid shift" : "early shift";
+  return `${windows[(day + index) % windows.length]} // day ${day} // ${pressureLabel}`;
 }
 
 function buildInitialResources(): ResourceCardState[] {
@@ -2174,7 +2297,7 @@ function normalizeState(state: DeadGridState): DeadGridState {
   const dayEvents = state.dayEvents ?? [];
   const tasks = state.tasks ?? [];
   const pendingConsequences = state.pendingConsequences ?? [];
-  const treatmentSlots = getInfirmaryTreatmentSlotCount(state.buildings);
+  const treatmentSlots = getInfirmaryTreatmentSlotCount(state.buildings, state.survivors);
   const selectedRecruitId =
     recruitPool.some((candidate) => candidate.id === state.selectedRecruitId)
       ? state.selectedRecruitId
@@ -2306,7 +2429,11 @@ function getTreatmentMedicineCostForSurvivor(
     (entry) =>
       entry.status === "ready" &&
       entry.assignment === "infirmary" &&
-      (entry.trait === "Steady hands" || entry.trait === "Dose keeper"),
+      (
+        entry.trait === "Steady hands" ||
+        entry.trait === "Dose keeper" ||
+        entry.trait === "Calm triage"
+      ),
   )
     ? 1
     : 0;
@@ -2318,7 +2445,15 @@ function getTreatmentMedicineCostForSurvivor(
 }
 
 function getTraitStorageBonus(trait: string) {
-  return trait === "Rig calm" ? 5 : 0;
+  if (trait === "Rig calm") {
+    return 5;
+  }
+
+  if (trait === "Rig specialist") {
+    return 4;
+  }
+
+  return 0;
 }
 
 function getSurvivorOperationalWeight(status: SurvivorStatus) {
@@ -2346,6 +2481,10 @@ function getTraitDamageBonus(trait: string) {
     return 0.04;
   }
 
+  if (trait === "Rig specialist") {
+    return 0.02;
+  }
+
   return 0;
 }
 
@@ -2354,16 +2493,73 @@ function getTraitHealingBonus(trait: string) {
 }
 
 function getTraitScrapYieldBonus(trait: string) {
-  return trait === "Scrap hound" ? 0.04 : 0;
+  if (trait === "Scrap hound") {
+    return 0.04;
+  }
+
+  if (trait === "Salvage nose") {
+    return 0.02;
+  }
+
+  return 0;
 }
 
-function getInfirmaryTreatmentSlotCount(buildings: BuildingState[]) {
+function getTraitAutoFireBonus(traits: string[]) {
+  return traits.reduce((sum, trait) => {
+    if (trait === "Cable eye") {
+      return sum + 0.015;
+    }
+
+    if (trait === "Turret tuner") {
+      return sum + 0.01;
+    }
+
+    return sum;
+  }, 0);
+}
+
+function getTraitFocusBonus(traits: string[]) {
+  return traits.reduce((sum, trait) => {
+    if (trait === "Lane anchor") {
+      return sum + 0.5;
+    }
+
+    return sum;
+  }, 0);
+}
+
+function getTraitShieldBonus(traits: string[]) {
+  return traits.reduce((sum, trait) => {
+    if (trait === "Wall hold") {
+      return sum + 0.7;
+    }
+
+    if (trait === "Shock brace") {
+      return sum + 0.5;
+    }
+
+    return sum;
+  }, 0);
+}
+
+function getInfirmaryTreatmentSlotCount(
+  buildings: BuildingState[],
+  survivors: Pick<SurvivorState, "status" | "assignment" | "trait">[] = [],
+) {
   const infirmaryLevel = getBuildingLevel(buildings, "infirmary");
-  return 1 + Math.floor((infirmaryLevel - 1) / 2);
+  const calmTriageBonus = survivors.some(
+    (survivor) =>
+      survivor.status === "ready" &&
+      survivor.assignment === "infirmary" &&
+      survivor.trait === "Calm triage",
+  )
+    ? 1
+    : 0;
+  return 1 + Math.floor((infirmaryLevel - 1) / 2) + calmTriageBonus;
 }
 
 function applyAutoTreatment(state: DeadGridState): DeadGridState {
-  const slots = getInfirmaryTreatmentSlotCount(state.buildings);
+  const slots = getInfirmaryTreatmentSlotCount(state.buildings, state.survivors);
   const prioritized = state.selectedTreatmentIds.slice(0, slots);
   let survivors = [...state.survivors];
   let remainingMedicine =
