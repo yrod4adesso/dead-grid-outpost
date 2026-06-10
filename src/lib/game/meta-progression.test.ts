@@ -23,6 +23,7 @@ const createTestProfile = (shards = 0, unlocked: string[] = []): DeadGridProfile
   unlockedNodes: unlocked,
   lastEarnedBlueprintShards: 0,
   lastRunOutcome: null,
+  commander: null,
 });
 
 describe("Meta-Progression", () => {

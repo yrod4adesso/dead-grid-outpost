@@ -1,0 +1,31 @@
+# Progress Log
+Run: 72c45299-773f-47eb-bfe0-7182ada8f7d7
+Task: Implement the 8 product-depth blocks (20 stories) from LAST_Z_CLONE_GAP_PLAN.md into dead-grid-outpost as additive enhancements (no rewrite). Preserve the profile/run state split.
+Started: 2026-06-10 18:40 UTC
+
+## Codebase Patterns
+- Stack: Next.js 16 (App Router) + React 19 + TypeScript 5 + Tailwind v4.
+- Game logic lives in src/lib/game/: state.ts (types, DEFAULT_GAME_STATE/PROFILE, hydrate*, GAME_VERSION=12, PROFILE_VERSION), store.ts (useSyncExternalStore-backed singleton store), storage.ts (localStorage load/save), building-tree.ts, meta-progression.ts, commander.ts, commander-recruit.ts.
+- Persistent profile (DeadGridProfile @ "dead-grid-outpost/profile-v1", PROFILE_VERSION) is SEPARATE from active run state (DeadGridState @ "dead-grid-outpost/save-v1", GAME_VERSION). Independent versioning + hydrate paths. Run reset must NOT touch profile. PRESERVE THIS SPLIT.
+- DeadGridProfile fields: version, blueprintShards, lifetimeRuns, highestDayReached, unlockedNodes (string[]), lastEarnedBlueprintShards, lastRunOutcome, commander (CommanderData|null).
+- store.ts exports: subscribeGameState, getGameSnapshot, getServerGameSnapshot, getGameProfileSnapshot, getServerGameProfileSnapshot, updateGameState, etc. UI components use useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot) — ALWAYS pass the matching server snapshot fn (e.g. getServerGameProfileSnapshot) as the 3rd arg, never an inline partial object (causes TS2345).
+- Re-export shared types from their owning module: meta-progression.ts re-exports DeadGridProfile/BuildingId from ./state via `export type { ... } from "./state"` so tests can import them.
+
+## Testing
+- Unit tests: Vitest. `npm test` -> `vitest run` (non-watch). Config: vitest.config.ts (environment: node, include src/**/*.test.{ts,tsx}, exclude tests/** and *.spec.ts, @ alias -> ./src).
+- E2E: Playwright. `npm run test:e2e` -> `playwright test`, testDir ./tests/e2e. Vitest and Playwright are fully separate (different dirs) — do NOT remove Playwright specs or tests/e2e.
+- Typecheck: `npx tsc --noEmit` (must be clean). Build: `npm run build`.
+- Building-tree prereq reason strings use the raw building id, e.g. "Requires storage Level 2" (lowercase id) — assert case-insensitively in tests.
+
+---
+
+## 2026-06-10 18:42 UTC - US-001: Set up Vitest unit test runner and fix broken module exports
+- Installed vitest as devDependency; added "test": "vitest run" script to package.json.
+- Added vitest.config.ts (node env, src/**/*.test.{ts,tsx} include, tests/** + *.spec.ts excluded, @ -> ./src alias).
+- Re-exported DeadGridProfile + BuildingId from src/lib/game/meta-progression.ts (re-export from ./state) so existing tests import them.
+- Fixed commander-panel.tsx useSyncExternalStore: replaced inline `() => ({ commander: null })` server snapshot with the existing getServerGameProfileSnapshot (returns full DEFAULT_GAME_PROFILE) -> resolves TS2345.
+- Fixed two test-file type/assertion issues (test infra only, no game logic change): added commander:null to meta-progression.test.ts createTestProfile; made building-tree.test.ts prereq assertion case-insensitive to match actual "Requires storage Level 2" output.
+- Files changed: package.json, package-lock.json, vitest.config.ts (new), src/lib/game/meta-progression.ts, src/components/commander-panel.tsx, src/lib/game/meta-progression.test.ts, src/lib/game/building-tree.test.ts.
+- Result: `npm test` -> 18/18 pass (2 files); `npx tsc --noEmit` clean; `npm run build` succeeds. Playwright e2e untouched.
+- **Learnings:** see Codebase Patterns + Testing sections above. No game logic was modified.
+---

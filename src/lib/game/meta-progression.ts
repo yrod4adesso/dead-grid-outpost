@@ -5,6 +5,8 @@
 
 import type { DeadGridProfile, BuildingId } from "./state";
 
+export type { DeadGridProfile, BuildingId } from "./state";
+
 // ============================================================================
 // Unlock Node Types
 // ============================================================================

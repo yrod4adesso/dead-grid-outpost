@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { getGameProfileSnapshot, subscribeGameState, updateGameState } from "@/lib/game/store";
+import { getGameProfileSnapshot, getServerGameProfileSnapshot, subscribeGameState, updateGameState } from "@/lib/game/store";
 import {
   getCommanderPerks,
   canUnlockPerk,
@@ -17,9 +17,11 @@ import {
 import { saveGameProfile, loadGameProfile } from "@/lib/game/storage";
 
 function useCommanderData() {
-  const profile = useSyncExternalStore(subscribeGameState, getGameProfileSnapshot, () => ({
-    commander: null,
-  }));
+  const profile = useSyncExternalStore(
+    subscribeGameState,
+    getGameProfileSnapshot,
+    getServerGameProfileSnapshot,
+  );
 
   const commander = profile.commander as Commander | null;
   const effects = getActiveCommanderEffects(commander);
