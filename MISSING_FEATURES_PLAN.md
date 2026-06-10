@@ -6,6 +6,10 @@ Capture the remaining feature blocks for `dead-grid-outpost` in a durable roadma
 
 This file is now the top-level planning reference for what is still missing after the first major progression and QA passes landed on `main`.
 
+For the broader product gap between the current prototype and a fuller `Last Z`-style clone target, see:
+
+- `LAST_Z_CLONE_GAP_PLAN.md`
+
 ## Current Product Snapshot
 
 The current prototype already includes:

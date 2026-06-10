@@ -63,6 +63,85 @@ test("returning from a terminal run clears resume eligibility across reload", as
   await expect(page.getByRole("button", { name: /start new run/i })).toBeVisible();
 });
 
+test("defeat grants persistent blueprint shards across reload", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /start new run/i }).click();
+
+  await page.evaluate(() => {
+    const key = "dead-grid-outpost/save-v1";
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      throw new Error("expected saved run state");
+    }
+
+    const parsed = JSON.parse(raw);
+    parsed.phase = "ended";
+    parsed.day = 5;
+    parsed.threatLevel = "Breached";
+    parsed.combatBlueprint = null;
+    parsed.lastCombatSummary = {
+      status: "defeat",
+      title: "Barricade failed",
+      detail: "The line collapsed after 2 cleared wave groups.",
+      rewardLabel: "Lost 2 food, 3 ammo",
+      wavesCleared: 2,
+      profileReward: 7,
+      profileRewardLabel: "Earned 7 blueprint shards",
+      profileRewardGranted: false,
+    };
+    window.localStorage.setItem(key, JSON.stringify(parsed));
+  });
+
+  await page.reload();
+
+  await expect(page.getByText(/earned 7 blueprint shards/i)).toBeVisible();
+  await expect(page.getByText(/campaign total now sits at/i)).toContainText("7");
+
+  await page.getByRole("button", { name: /return to landing/i }).click();
+  await expect(page.getByText(/campaign profile/i)).toBeVisible();
+  await expect(page.locator("body")).toContainText("Blueprint shards");
+  await expect(page.locator("body")).toContainText("7");
+
+  await page.reload();
+  await expect(page.getByText(/campaign profile/i)).toBeVisible();
+  await expect(page.locator("body")).toContainText("Blueprint shards");
+  await expect(page.locator("body")).toContainText("7");
+});
+
+test("reset run clears the active run but keeps persistent profile progress", async ({ page }) => {
+  await page.goto("/");
+
+  await page.evaluate(() => {
+    window.localStorage.setItem(
+      "dead-grid-outpost/profile-v1",
+      JSON.stringify({
+        version: 1,
+        blueprintShards: 9,
+        lifetimeRuns: 2,
+        highestDayReached: 6,
+        unlockedNodes: [],
+        lastEarnedBlueprintShards: 4,
+        lastRunOutcome: "defeat",
+      }),
+    );
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /start new run/i }).click();
+  await expect(page.getByRole("heading", { name: /outpost halcyon/i })).toBeVisible();
+
+  await page.getByRole("button", { name: /reset run/i }).click();
+
+  await expect(page.getByRole("button", { name: /continue run/i })).toHaveCount(0);
+  await expect(page.getByText(/campaign profile/i)).toBeVisible();
+  await expect(page.locator("body")).toContainText("Blueprint shards");
+  await expect(page.locator("body")).toContainText("9");
+  await expect(page.locator("body")).toContainText("Highest day");
+  await expect(page.locator("body")).toContainText("6");
+});
+
 test("critical threat persists across reload and is surfaced in route and defense planning", async ({ page }) => {
   await page.goto("/");
 

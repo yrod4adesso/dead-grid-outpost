@@ -2,10 +2,13 @@
 
 import { startTransition, useMemo, useSyncExternalStore } from "react";
 import { CombatPrototype } from "@/components/combat-prototype";
+import { ProfilePanel } from "@/components/profile-panel";
+import { CommanderPanel } from "@/components/commander-panel";
 import {
   assignSurvivor,
   canUpgradeBuilding,
   canRecruitSurvivor,
+  type DeadGridProfile,
   createLandingGameState,
   canTreatSurvivor,
   continueFromCombatSummary,
@@ -51,7 +54,9 @@ import {
 } from "@/lib/game/state";
 import {
   getGameSnapshot,
+  getGameProfileSnapshot,
   getResumableGameSnapshot,
+  getServerGameProfileSnapshot,
   getServerGameSnapshot,
   resumeSavedGame,
   updateGameState,
@@ -60,6 +65,7 @@ import {
 
 export function DeadGridApp() {
   const state = useSyncExternalStore(subscribeGameState, getGameSnapshot, getServerGameSnapshot);
+  const profile = useSyncExternalStore(subscribeGameState, getGameProfileSnapshot, getServerGameProfileSnapshot);
   const resumableState = getResumableGameSnapshot();
   const hasResumeSave = Boolean(resumableState?.hasStarted);
 
@@ -241,15 +247,22 @@ export function DeadGridApp() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(243,157,74,0.12),_transparent_36%),linear-gradient(180deg,_#09141d_0%,_#071017_54%,_#05090d_100%)] px-4 py-6 text-[var(--ink)] sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         {!state.hasStarted ? (
-          <StartScreen onContinue={continueSavedGame} onNewGame={beginNewGame} resumableState={resumableState} />
+          <StartScreen
+            onContinue={continueSavedGame}
+            onNewGame={beginNewGame}
+            profile={profile}
+            resumableState={resumableState}
+          />
         ) : state.phase === "combat" && state.combatBlueprint ? (
           <CombatPrototype blueprint={state.combatBlueprint} onResolve={finishNightDefense} />
         ) : state.phase === "summary" && state.lastCombatSummary ? (
-          <RunSummaryScreen onContinue={continueAfterSummary} state={state} />
+          <RunSummaryScreen onContinue={continueAfterSummary} profile={profile} state={state} />
         ) : state.phase === "ended" && state.lastCombatSummary ? (
-          <RunEndedScreen onNewGame={beginNewGame} onReturnToLanding={resetSave} state={state} />
+          <RunEndedScreen onNewGame={beginNewGame} onReturnToLanding={resetSave} profile={profile} state={state} />
         ) : (
           <>
+            <CommanderPanel />
+            <ProfilePanel />
             <header className="overflow-hidden rounded-[2rem] border border-white/10 bg-black/25 shadow-2xl shadow-black/25 backdrop-blur">
               <div className="grid gap-6 px-6 py-8 lg:grid-cols-[1.4fr_0.9fr]">
                 <div>
@@ -268,6 +281,7 @@ export function DeadGridApp() {
                     <Badge label="Status" value="Day Shift" />
                     <Badge label="Threat" value={state.threatLevel} />
                     <Badge label="Modifier" value={state.activeDayModifier?.label ?? "None"} />
+                    <Badge label="Blueprint shards" value={`${profile.blueprintShards}`} />
                     <Badge label="Save" value={state.lastSavedLabel} />
                   </div>
                   <div className="mt-4 max-w-3xl rounded-[1.4rem] border border-white/10 bg-black/20 px-4 py-4 text-sm text-white/68">
@@ -697,10 +711,12 @@ export function DeadGridApp() {
 function StartScreen({
   onContinue,
   onNewGame,
+  profile,
   resumableState,
 }: {
   onContinue: () => void;
   onNewGame: () => void;
+  profile: DeadGridProfile;
   resumableState: DeadGridState | null;
 }) {
   const canContinue = Boolean(resumableState?.hasStarted);
@@ -734,6 +750,23 @@ function StartScreen({
           >
             Start new run
           </button>
+        </div>
+        <div className="mt-5 grid gap-3 rounded-[1.6rem] border border-amber-500/20 bg-amber-500/8 p-4">
+          <p className="text-xs uppercase tracking-[0.24em] text-amber-200/80">Campaign profile</p>
+          <div className="grid gap-2 text-sm text-white/72">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-white/55">Blueprint shards</span>
+              <span className="font-medium text-white">{profile.blueprintShards}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-white/55">Highest day</span>
+              <span className="font-medium text-white">{profile.highestDayReached || "None yet"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-white/55">Completed runs</span>
+              <span className="font-medium text-white">{profile.lifetimeRuns}</span>
+            </div>
+          </div>
         </div>
         {canContinue ? (
           <div className="mt-5 grid gap-3 rounded-[1.6rem] border border-[var(--signal)]/25 bg-[rgba(73,183,172,0.08)] p-4">
@@ -793,9 +826,11 @@ function StartScreen({
 
 function RunSummaryScreen({
   onContinue,
+  profile,
   state,
 }: {
   onContinue: () => void;
+  profile: DeadGridProfile;
   state: DeadGridState;
 }) {
   const summary = state.lastCombatSummary;
@@ -837,6 +872,7 @@ function RunSummaryScreen({
         <div className="mt-5 rounded-[1.6rem] border border-white/8 bg-black/20 p-5">
           <p className="text-xs uppercase tracking-[0.24em] text-white/45">Resolution</p>
           <p className="mt-3 text-lg font-medium text-white">{summary.rewardLabel}</p>
+          <p className="mt-2 text-sm font-medium text-[var(--signal)]">{summary.profileRewardLabel}</p>
           <p className="mt-2 text-sm text-white/60">
             {isVictory
               ? `The outpost rolls into day ${state.day} with refreshed routes, recruits, and field events.`
@@ -865,6 +901,10 @@ function RunSummaryScreen({
           <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
             Threat level now sits at <span className="font-medium text-white">{state.threatLevel}</span>.
           </div>
+          <div className="rounded-[1.4rem] border border-[var(--signal)]/25 bg-[var(--signal)]/8 px-4 py-4 text-sm text-white/72">
+            Campaign stores <span className="font-medium text-white">{profile.blueprintShards}</span> blueprint
+            shards after this defense result.
+          </div>
           <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
             Save state remains active. You can leave now and continue this run later from the landing screen.
           </div>
@@ -880,10 +920,12 @@ function RunSummaryScreen({
 function RunEndedScreen({
   onNewGame,
   onReturnToLanding,
+  profile,
   state,
 }: {
   onNewGame: () => void;
   onReturnToLanding: () => void;
+  profile: DeadGridProfile;
   state: DeadGridState;
 }) {
   const summary = state.lastCombatSummary;
@@ -908,6 +950,7 @@ function RunEndedScreen({
         <div className="mt-5 rounded-[1.6rem] border border-[#ffb08b]/20 bg-[rgba(120,21,46,0.16)] p-5">
           <p className="text-xs uppercase tracking-[0.24em] text-[#ffb08b]">Final report</p>
           <p className="mt-3 text-lg font-medium text-white">{summary.rewardLabel}</p>
+          <p className="mt-2 text-sm font-medium text-[var(--signal)]">{summary.profileRewardLabel}</p>
           <p className="mt-2 text-sm text-white/60">
             The outpost could not hold this cycle. This run should no longer appear as a resumable campaign from the landing screen.
           </p>
@@ -938,6 +981,10 @@ function RunEndedScreen({
           </div>
           <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
             Survivors and supply losses have been logged, but this campaign is no longer eligible for `Continue run`.
+          </div>
+          <div className="rounded-[1.4rem] border border-[var(--signal)]/25 bg-[var(--signal)]/8 px-4 py-4 text-sm text-white/72">
+            Campaign total now sits at <span className="font-medium text-white">{profile.blueprintShards}</span>{" "}
+            blueprint shards.
           </div>
           <div className="rounded-[1.4rem] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/72">
             Use the landing screen to review the loss or start a fresh command loop.
@@ -1168,7 +1215,7 @@ function BuildingStatusCard({
       <div
         className="mt-4 rounded-[1.3rem] border border-white/8 p-4"
         style={{
-          backgroundImage: `linear-gradient(180deg, ${theme.glow} 0%, rgba(255,255,255,0.02) 58%, rgba(0,0,0,0.22) 100%)`,
+          backgroundImage: `linear-gradient(180deg, ${theme?.glow ?? "rgba(255,255,255,0.1)"}  0%, rgba(255,255,255,0.02) 58%, rgba(0,0,0,0.22) 100%)`,
         }}
       >
         <div className="flex h-20 items-end gap-2">
@@ -1182,8 +1229,8 @@ function BuildingStatusCard({
                 key={`${building.id}-bar-${index}`}
                 style={{
                   height: `${32 + index * 10}px`,
-                  background: active ? theme.fill : "rgba(255,255,255,0.04)",
-                  boxShadow: active ? `0 0 24px ${theme.shadow}` : "none",
+                  background: active ? (theme?.fill ?? "rgba(255,255,255,0.8)") : "rgba(255,255,255,0.04)",
+                  boxShadow: active ? `0 0 24px ${theme?.shadow ?? "rgba(255,255,255,0.3)"} ` : "none",
                 }}
               />
             );
@@ -1215,7 +1262,7 @@ function FocusedBuildingScene({
       <div
         className="px-5 py-5"
         style={{
-          backgroundImage: `radial-gradient(circle at top, ${theme.glow}, transparent 48%), linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))`,
+          backgroundImage: `radial-gradient(circle at top, ${theme?.glow ?? "rgba(255,255,255,0.1)"} , transparent 48%), linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))`,
         }}
       >
         <p className="text-xs uppercase tracking-[0.24em] text-white/45">Visual state</p>
@@ -1229,8 +1276,8 @@ function FocusedBuildingScene({
               key={`${building.id}-tower-${index}`}
               style={{
                 height: `${36 + index * 14}px`,
-                background: index < building.level ? theme.fill : "rgba(255,255,255,0.04)",
-                boxShadow: index < building.level ? `0 0 20px ${theme.shadow}` : "none",
+                background: index < building.level ? (theme?.fill ?? "rgba(255,255,255,0.8)") : "rgba(255,255,255,0.04)",
+                boxShadow: index < building.level ? `0 0 20px ${theme?.shadow ?? "rgba(255,255,255,0.3)"} ` : "none",
               }}
             />
           ))}

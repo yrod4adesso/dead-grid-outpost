@@ -1,4 +1,8 @@
 export const GAME_VERSION = 12;
+import { getActiveCommanderEffects, type Commander } from "./commander";
+import { canUnlockBuilding, getActiveSynergies, describeActiveSynergies } from "./building-tree";
+import { applyUnlockEffectsToState } from "./meta-progression";
+export const PROFILE_VERSION = 1;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -10,7 +14,7 @@ export type DayModifierId =
   | "overcrowded-infirmary"
   | "salvage-window";
 export type SpecialNightId = "brute_surge" | "blackout_grid" | "thin_supplies" | "pursuit_spike";
-export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower";
+export type BuildingId = "workshop" | "infirmary" | "storage" | "watchtower" | "command_center";
 export type SurvivorRole = "fighter" | "scavenger" | "medic" | "builder";
 export type SurvivorAssignment = BuildingId | "defense" | null;
 export type SurvivorStatus = "ready" | "fatigued" | "injured";
@@ -187,8 +191,32 @@ export type CombatSummary = {
   detail: string;
   rewardLabel: string;
   wavesCleared: number;
+  profileReward: number;
+  profileRewardLabel: string;
+  profileRewardGranted: boolean;
   specialNightLabel?: string;
   specialNightDetail?: string;
+};
+
+export type CommanderData = {
+  id: string;
+  name: string;
+  rarity: "common" | "rare" | "epic" | "legendary";
+  level: number;
+  exp: number;
+  currentBranch: "combat" | "route" | "recovery";
+  unlockedPerks: string[];
+};
+
+export type DeadGridProfile = {
+  version: number;
+  blueprintShards: number;
+  lifetimeRuns: number;
+  highestDayReached: number;
+  unlockedNodes: string[];
+  lastEarnedBlueprintShards: number;
+  lastRunOutcome: CombatSummary["status"] | null;
+  commander: CommanderData | null;
 };
 
 export type BuildingStats = {
@@ -595,6 +623,15 @@ const INITIAL_BUILDINGS: BuildingState[] = [
     effect: describeBuildingEffect("watchtower", 1),
     isFocused: false,
   },
+  {
+    id: "command_center",
+    name: "Command Center",
+    category: "Command",
+    level: 0, // Locked initially - requires prerequisites
+    summary: "Coordinates recruitment and route planning. Unlocks with Workshop Level 3 and Infirmary Level 2.",
+    effect: "Locked - Requires Workshop Level 3 + Infirmary Level 2",
+    isFocused: false,
+  },
 ];
 
 const INITIAL_SURVIVORS: SurvivorState[] = [
@@ -703,16 +740,58 @@ export const DEFAULT_GAME_STATE: DeadGridState = {
   lastCombatSummary: null,
 };
 
+
+// Global profile reference for unlock effects
+let currentProfile: DeadGridProfile | null = null;
+
+export function setCurrentProfile(profile: DeadGridProfile | null): void {
+  currentProfile = profile;
+}
+
+export function getCurrentProfile(): DeadGridProfile | null {
+  return currentProfile;
+}
+
+export const DEFAULT_GAME_PROFILE: DeadGridProfile = {
+  version: PROFILE_VERSION,
+  blueprintShards: 0,
+  lifetimeRuns: 0,
+  highestDayReached: 0,
+  unlockedNodes: [],
+  lastEarnedBlueprintShards: 0,
+  lastRunOutcome: null,
+  commander: null,
+};
+
 export function createLandingGameState(): DeadGridState {
   return normalizeState(structuredClone(DEFAULT_GAME_STATE));
 }
 
 export function createNewGameState(): DeadGridState {
-  return normalizeState({
+  const baseState = normalizeState({
     ...structuredClone(DEFAULT_GAME_STATE),
     hasStarted: true,
     lastSavedLabel: "Autosaving...",
   });
+
+  // Apply meta-progression unlock effects if profile is available
+  if (currentProfile) {
+    const derivedStats = getDerivedStats(baseState.buildings, baseState.survivors);
+    const unlockedStats = applyUnlockEffectsToState(currentProfile, derivedStats);
+    
+    // Apply storage cap bonus
+    baseState.resources = baseState.resources.map((res) => {
+      if (res.id === "scrap") {
+        return {
+          ...res,
+          amount: Math.min(res.amount + unlockedStats.storageCapBonus - 60, res.amount),
+        };
+      }
+      return res;
+    });
+  }
+
+  return baseState;
 }
 
 export function hydrateLoadedState(state: DeadGridState): DeadGridState {
@@ -738,6 +817,14 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
     combatBlueprint: state.combatBlueprint ?? null,
     lastCombatSummary: state.lastCombatSummary ?? null,
   });
+}
+
+export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile {
+  return {
+    ...structuredClone(DEFAULT_GAME_PROFILE),
+    ...profile,
+    unlockedNodes: profile.unlockedNodes ?? [],
+  };
 }
 
 export function toggleMissionTeamMember(state: DeadGridState, survivorId: string): DeadGridState {
@@ -1408,6 +1495,7 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
     : stats.healingBonus > 0
       ? `Lost 2 food, 3 ammo, recovered ${stats.healingBonus} medicine`
       : "Lost 2 food, 3 ammo";
+  const profileReward = getBlueprintShardReward(victory ? nextState.day : state.day, nextThreatLevel, outcome.status);
 
   return normalizeState({
     ...nextState,
@@ -1423,6 +1511,9 @@ export function resolveCombatOutcome(state: DeadGridState, outcome: CombatOutcom
           : `The line collapsed after ${outcome.wavesCleared} cleared wave groups.`,
       rewardLabel,
       wavesCleared: outcome.wavesCleared,
+      profileReward,
+      profileRewardLabel: `Earned ${profileReward} blueprint shard${profileReward === 1 ? "" : "s"}`,
+      profileRewardGranted: false,
       specialNightLabel: resolvedSpecialNight?.label,
       specialNightDetail: resolvedSpecialNight?.detail,
     },
@@ -1553,12 +1644,24 @@ export function getBuildingUpgradeCost(building: BuildingState): Partial<Record<
         scrap: 9 + nextLevel * 4,
         ammo: 1 + nextLevel,
       };
+    case "command_center":
+      return {
+        scrap: 15 + nextLevel * 5,
+        ammo: 2 + nextLevel * 2,
+      };
   }
 }
 
 export function getDerivedStats(
   buildings: BuildingState[],
   survivors: SurvivorState[] = [],
+  commanderEffects?: {
+    damageBonus: number;
+    healingBonus: number;
+    recruitBonus: number;
+    missionBonus: number;
+    defenseBonus: number;
+  } | null,
 ): BuildingStats {
   const readySurvivors = survivors.filter((survivor) => survivor.status === "ready");
   const operationalSurvivors = survivors.filter((survivor) => survivor.status !== "injured");
@@ -1657,12 +1760,17 @@ export function getDerivedStats(
       : null,
   ].filter((entry): entry is string => Boolean(entry));
 
+  // Apply Commander effects
+  const cmdDamageBonus = commanderEffects?.damageBonus ?? 0;
+  const cmdHealingBonus = commanderEffects?.healingBonus ?? 0;
+  const cmdDefenseBonus = commanderEffects?.defenseBonus ?? 0;
+
   return {
     storageLimit: 60 + (storageLevel - 1) * 20 + builderStorageBonus + traitStorageBonus,
-    damageMultiplier: 1 + (watchtowerLevel - 1) * 0.12 + fighterBonus + builderTowerBonus + traitDamageBonus,
-    healingBonus: infirmaryLevel - 1 + medicBonus + traitHealingBonus,
+    damageMultiplier: 1 + (watchtowerLevel - 1) * 0.12 + fighterBonus + builderTowerBonus + traitDamageBonus + cmdDamageBonus,
+    healingBonus: infirmaryLevel - 1 + medicBonus + traitHealingBonus + cmdHealingBonus,
     scrapYieldMultiplier: 1 + (workshopLevel - 1) * 0.14 + scavengerBonus + traitScrapBonus,
-    assignedDefense: Number(assignedDefense.toFixed(1)),
+    assignedDefense: Number((assignedDefense + cmdDefenseBonus * 10).toFixed(1)),
     autoFireInterval: Math.max(0.28, Number(autoFireInterval.toFixed(2))),
     manualCooldown: Math.max(0.45, Number(manualCooldown.toFixed(2))),
     focusDuration: Number(focusDuration.toFixed(1)),
@@ -2348,6 +2456,18 @@ function normalizeState(state: DeadGridState): DeadGridState {
         context: `${RESOURCE_BASE_CONTEXT[resource.id]} // ${amount}/${stats.storageLimit}`,
       };
     }),
+    lastCombatSummary: state.lastCombatSummary
+      ? {
+          ...state.lastCombatSummary,
+          profileReward: state.lastCombatSummary.profileReward ?? 0,
+          profileRewardLabel:
+            state.lastCombatSummary.profileRewardLabel ??
+            `Earned ${state.lastCombatSummary.profileReward ?? 0} blueprint shard${
+              (state.lastCombatSummary.profileReward ?? 0) === 1 ? "" : "s"
+            }`,
+          profileRewardGranted: state.lastCombatSummary.profileRewardGranted ?? true,
+        }
+      : null,
   };
 }
 
@@ -2755,6 +2875,18 @@ function recoverSurvivorsAfterNight(
 
     return survivor;
   });
+}
+
+function getBlueprintShardReward(
+  day: number,
+  threatLevel: ThreatLevel,
+  outcome: CombatOutcome["status"],
+) {
+  const threatBonus = Math.min(2, THREAT_LEVELS.indexOf(threatLevel));
+  const dayBonus = outcome === "victory" ? Math.floor(Math.max(day - 1, 0) / 3) : Math.floor(Math.max(day - 1, 0) / 2);
+  const base = outcome === "victory" ? 1 : 3;
+
+  return base + dayBonus + threatBonus;
 }
 
 function applyWorkshopBonusToReward(
@@ -3249,6 +3381,21 @@ function createLogEntry(title: string, detail: string): ActivityLogEntry {
   };
 }
 
+export function applyCombatSummaryProfileReward(
+  profile: DeadGridProfile,
+  summary: CombatSummary,
+  day: number,
+): DeadGridProfile {
+  return hydrateLoadedProfile({
+    ...profile,
+    blueprintShards: profile.blueprintShards + summary.profileReward,
+    lifetimeRuns: profile.lifetimeRuns + (summary.status === "defeat" ? 1 : 0),
+    highestDayReached: Math.max(profile.highestDayReached, day),
+    lastEarnedBlueprintShards: summary.profileReward,
+    lastRunOutcome: summary.status,
+  });
+}
+
 function describeReward(reward: Partial<Record<ResourceId, number>>) {
   const parts = Object.entries(reward)
     .filter((entry): entry is [ResourceId, number] => typeof entry[1] === "number" && entry[1] > 0)
@@ -3267,6 +3414,10 @@ function describeBuildingEffect(buildingId: BuildingId, level: number) {
       return `Post-combat healing +${level - 1} medicine.`;
     case "workshop":
       return `Scrap yield +${Math.round((1 + (level - 1) * 0.14 - 1) * 100)}%.`;
+    case "command_center":
+      if (level === 1) return "Recruit quality improved (+1 candidate).";
+      if (level === 2) return "Route visibility enhanced (better mission preview).";
+      return "Commander assignment unlocked (commander slot available).";
   }
 }
 

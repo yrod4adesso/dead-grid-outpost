@@ -1,6 +1,14 @@
-import { GAME_VERSION, hydrateLoadedState, type DeadGridState } from "@/lib/game/state";
+import {
+  GAME_VERSION,
+  PROFILE_VERSION,
+  hydrateLoadedProfile,
+  hydrateLoadedState,
+  type DeadGridProfile,
+  type DeadGridState,
+} from "@/lib/game/state";
 
 const STORAGE_KEY = "dead-grid-outpost/save-v1";
+const PROFILE_STORAGE_KEY = "dead-grid-outpost/profile-v1";
 
 export function loadGameState(): DeadGridState | null {
   if (typeof window === "undefined") {
@@ -41,6 +49,40 @@ export function saveGameState(state: DeadGridState) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 
   return payload;
+}
+
+export function loadGameProfile(): DeadGridProfile | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as DeadGridProfile;
+
+    if (parsed.version !== PROFILE_VERSION) {
+      return null;
+    }
+
+    return hydrateLoadedProfile(parsed);
+  } catch {
+    return null;
+  }
+}
+
+export function saveGameProfile(profile: DeadGridProfile) {
+  if (typeof window === "undefined") {
+    return profile;
+  }
+
+  window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+
+  return profile;
 }
 
 export function clearGameState() {
