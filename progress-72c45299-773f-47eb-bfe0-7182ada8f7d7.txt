@@ -5,17 +5,20 @@ Started: 2026-06-10 18:40 UTC
 
 ## Codebase Patterns
 - Stack: Next.js 16 (App Router) + React 19 + TypeScript 5 + Tailwind v4.
-- Game logic lives in src/lib/game/: state.ts (types, DEFAULT_GAME_STATE/PROFILE, hydrate*, GAME_VERSION=12, PROFILE_VERSION), store.ts (useSyncExternalStore-backed singleton store), storage.ts (localStorage load/save), building-tree.ts, meta-progression.ts, commander.ts, commander-recruit.ts.
+- Game logic lives in src/lib/game/: state.ts (types, DEFAULT_GAME_STATE/PROFILE, hydrate*, GAME_VERSION=12, PROFILE_VERSION), store.ts (useSyncExternalStore-backed singleton store), storage.ts (localStorage load/save), building-tree.ts, meta-progression.ts, commander.ts, commander-recruit.ts, profile-currency.ts (NEW, US-002).
 - Persistent profile (DeadGridProfile @ "dead-grid-outpost/profile-v1", PROFILE_VERSION) is SEPARATE from active run state (DeadGridState @ "dead-grid-outpost/save-v1", GAME_VERSION). Independent versioning + hydrate paths. Run reset must NOT touch profile. PRESERVE THIS SPLIT.
 - DeadGridProfile fields: version, blueprintShards, lifetimeRuns, highestDayReached, unlockedNodes (string[]), lastEarnedBlueprintShards, lastRunOutcome, commander (CommanderData|null).
 - store.ts exports: subscribeGameState, getGameSnapshot, getServerGameSnapshot, getGameProfileSnapshot, getServerGameProfileSnapshot, updateGameState, etc. UI components use useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot) — ALWAYS pass the matching server snapshot fn (e.g. getServerGameProfileSnapshot) as the 3rd arg, never an inline partial object (causes TS2345).
 - Re-export shared types from their owning module: meta-progression.ts re-exports DeadGridProfile/BuildingId from ./state via `export type { ... } from "./state"` so tests can import them.
+- PROFILE CURRENCY (US-002): pure helpers live in src/lib/game/profile-currency.ts — earnShards(profile, amount), spendShards(profile, amount): {ok, profile, reason?}, canAffordShards(profile, amount). All return NEW profile objects (no mutation). earn clamps negatives/NaN/Infinity to 0 and floors; balance never negative. spend rejects overspend/non-positive and returns profile unchanged. applyCombatSummaryProfileReward in state.ts now routes its shard award through earnShards (then still wraps in hydrateLoadedProfile for the lifetimeRuns/highestDay/lastRunOutcome bookkeeping). NOTE: meta-progression.ts unlockNode() still deducts shards inline (profile.blueprintShards - node.cost); a future story can migrate it to spendShards if desired — left intact this story to avoid scope creep.
+- Combat-summary shard earn formula: getBlueprintShardReward(day, threatLevel, status) in state.ts produces summary.profileReward; earn is granted once via the profileRewardGranted guard in store.ts (load + post-update paths).
 
 ## Testing
 - Unit tests: Vitest. `npm test` -> `vitest run` (non-watch). Config: vitest.config.ts (environment: node, include src/**/*.test.{ts,tsx}, exclude tests/** and *.spec.ts, @ alias -> ./src).
 - E2E: Playwright. `npm run test:e2e` -> `playwright test`, testDir ./tests/e2e. Vitest and Playwright are fully separate (different dirs) — do NOT remove Playwright specs or tests/e2e.
 - Typecheck: `npx tsc --noEmit` (must be clean). Build: `npm run build`.
 - Building-tree prereq reason strings use the raw building id, e.g. "Requires storage Level 2" (lowercase id) — assert case-insensitively in tests.
+- Test profile factory pattern: build a literal DeadGridProfile (version, blueprintShards, lifetimeRuns, highestDayReached, unlockedNodes, lastEarnedBlueprintShards, lastRunOutcome, commander). Reused in meta-progression.test.ts and profile-currency.test.ts.
 
 ---
 
@@ -28,4 +31,14 @@ Started: 2026-06-10 18:40 UTC
 - Files changed: package.json, package-lock.json, vitest.config.ts (new), src/lib/game/meta-progression.ts, src/components/commander-panel.tsx, src/lib/game/meta-progression.test.ts, src/lib/game/building-tree.test.ts.
 - Result: `npm test` -> 18/18 pass (2 files); `npx tsc --noEmit` clean; `npm run build` succeeds. Playwright e2e untouched.
 - **Learnings:** see Codebase Patterns + Testing sections above. No game logic was modified.
+---
+
+## 2026-06-10 19:01 UTC - US-002: Add persistent profile currency earn/spend ledger
+- Added src/lib/game/profile-currency.ts (NEW): pure earnShards / spendShards / canAffordShards helpers over DeadGridProfile. earn clamps amount (negative/NaN/Infinity -> 0, floors fractions) and clamps corrupt negative balances; balance never negative; sets lastEarnedBlueprintShards. spend returns {ok, profile, reason?} — rejects overspend and non-positive amounts, leaving the profile object reference unchanged on rejection. No mutation of inputs in any helper.
+- Routed applyCombatSummaryProfileReward (state.ts) through earnShards instead of inline `blueprintShards + summary.profileReward`; still wraps in hydrateLoadedProfile and keeps lifetimeRuns/highestDayReached/lastRunOutcome bookkeeping. Added `import { earnShards } from "./profile-currency"` to state.ts.
+- Did NOT change DeadGridState (run state) at all. Did NOT bump PROFILE_VERSION (no shape change — only new helper functions over existing blueprintShards/lastEarnedBlueprintShards fields).
+- Tests: added src/lib/game/profile-currency.test.ts (12 cases) covering earn increase + no-negative + clamp + floor + NaN/Infinity, spend deduct + overspend-reject-unchanged + full-balance-spend + non-positive-reject + immutability, and canAffordShards.
+- Files changed: src/lib/game/profile-currency.ts (new), src/lib/game/profile-currency.test.ts (new), src/lib/game/state.ts.
+- Result: `npx tsc --noEmit` clean; `npm test` -> 30/30 pass (3 files); `npm run build` succeeds. Playwright e2e untouched.
+- **Learnings:** unlockNode() in meta-progression.ts still spends inline; intentionally left for a later story to avoid scope creep. See Codebase Patterns "PROFILE CURRENCY" note.
 ---

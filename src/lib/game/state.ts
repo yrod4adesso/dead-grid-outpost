@@ -2,6 +2,7 @@ export const GAME_VERSION = 12;
 import { getActiveCommanderEffects, type Commander } from "./commander";
 import { canUnlockBuilding, getActiveSynergies, describeActiveSynergies } from "./building-tree";
 import { applyUnlockEffectsToState } from "./meta-progression";
+import { earnShards } from "./profile-currency";
 export const PROFILE_VERSION = 1;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
@@ -3386,12 +3387,13 @@ export function applyCombatSummaryProfileReward(
   summary: CombatSummary,
   day: number,
 ): DeadGridProfile {
+  // Route the shard award through the currency ledger earn helper so the
+  // earn formula stays clamped/non-negative and centralized (US-002).
+  const earned = earnShards(profile, summary.profileReward);
   return hydrateLoadedProfile({
-    ...profile,
-    blueprintShards: profile.blueprintShards + summary.profileReward,
-    lifetimeRuns: profile.lifetimeRuns + (summary.status === "defeat" ? 1 : 0),
-    highestDayReached: Math.max(profile.highestDayReached, day),
-    lastEarnedBlueprintShards: summary.profileReward,
+    ...earned,
+    lifetimeRuns: earned.lifetimeRuns + (summary.status === "defeat" ? 1 : 0),
+    highestDayReached: Math.max(earned.highestDayReached, day),
     lastRunOutcome: summary.status,
   });
 }
