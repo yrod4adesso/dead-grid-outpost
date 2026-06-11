@@ -88,6 +88,22 @@ export function spendShards(profile: DeadGridProfile, amount: number): SpendResu
   };
 }
 
+/**
+ * Apply a combat-summary shard reward, with first-loss bonus: if the profile
+ * has no previous loss (lastRunOutcome !== "defeat"), double the shards earned.
+ */
+export function applyRewardShards(
+  profile: DeadGridProfile,
+  reward: number,
+  outcome: NonNullable<DeadGridProfile["lastRunOutcome"]>,
+): DeadGridProfile {
+  const isDefeat = outcome === "defeat";
+  const isFirstLoss = profile.lastRunOutcome !== "defeat";
+  const doubled = isDefeat && isFirstLoss;
+  const finalReward = doubled ? reward * 2 : reward;
+  return earnShards(profile, finalReward);
+}
+
 /** Convenience: true when the profile can afford the given spend. */
 export function canAffordShards(profile: DeadGridProfile, amount: number): boolean {
   const requested = normalizeAmount(amount);

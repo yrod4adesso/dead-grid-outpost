@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { earnShards, spendShards, canAffordShards } from "./profile-currency";
+import { earnShards, spendShards, canAffordShards, applyRewardShards } from "./profile-currency";
 import type { DeadGridProfile } from "./state";
 
 const makeProfile = (shards = 0): DeadGridProfile => ({
@@ -98,5 +98,72 @@ describe("Profile Currency Ledger", () => {
       expect(canAffordShards(p, 6)).toBe(false);
       expect(canAffordShards(p, 0)).toBe(false);
     });
+  });
+});
+
+describe("applyRewardShards (first-loss bonus)", () => {
+  const makeVictoryProfile = (shards = 0, lastOutcome: DeadGridProfile["lastRunOutcome"] = null): DeadGridProfile => ({
+    version: 2,
+    blueprintShards: shards,
+    lifetimeRuns: 0,
+    highestDayReached: 0,
+    unlockedNodes: [],
+    lastEarnedBlueprintShards: 0,
+    lastRunOutcome: lastOutcome,
+    commander: null,
+    profileProgress: { firstLossRewardClaimed: false },
+  });
+
+  it("earns normal amount on victory", () => {
+    const p = makeVictoryProfile(10);
+    const result = applyRewardShards(p, 5, "victory");
+    expect(result.blueprintShards).toBe(15);
+    expect(result.lastEarnedBlueprintShards).toBe(5);
+  });
+
+  it("doubles shards on first defeat (first-loss bonus = double)", () => {
+    // Profile has no prior defeat → first loss
+    const p = makeVictoryProfile(10, null);
+    const result = applyRewardShards(p, 5, "defeat");
+    expect(result.blueprintShards).toBe(20); // 10 + 5*2
+    expect(result.lastEarnedBlueprintShards).toBe(10);
+  });
+
+  it("does NOT double on subsequent defeats", () => {
+    // Profile already has a defeat → not first loss
+    const p = makeVictoryProfile(10, "defeat");
+    const result = applyRewardShards(p, 5, "defeat");
+    expect(result.blueprintShards).toBe(15); // Normal amount
+  });
+
+  it("doubles only once — subsequent defeats remain normal", () => {
+    const p = makeVictoryProfile(15, "defeat");
+    const r1 = applyRewardShards(p, 3, "defeat");
+    expect(r1.blueprintShards).toBe(18); // 15 + 3
+
+    const r2 = applyRewardShards(r1, 4, "defeat");
+    expect(r2.blueprintShards).toBe(22); // 18 + 4 (normal)
+  });
+
+  it("doubles are clamped by earnShards non-negative invariant", () => {
+    const p = makeVictoryProfile(0);
+    const result = applyRewardShards(p, -5, "defeat");
+    // Negative earn is clamped to 0 by earnShards
+    expect(result.blueprintShards).toBe(0);
+  });
+
+  it("does not mutate input profile", () => {
+    const p = makeVictoryProfile(10, null);
+    applyRewardShards(p, 5, "defeat");
+    expect(p.blueprintShards).toBe(10);
+  });
+
+  it("preserves other profile fields through applyRewardShards", () => {
+    const p = makeVictoryProfile(10, null);
+    const result = applyRewardShards(p, 5, "defeat");
+    expect(result.version).toBe(2);
+    expect(result.lifetimeRuns).toBe(0);
+    expect(result.lastEarnedBlueprintShards).toBe(10);
+    expect(result.profileProgress).toEqual({ firstLossRewardClaimed: false });
   });
 });

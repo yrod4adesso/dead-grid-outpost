@@ -2,7 +2,7 @@ export const GAME_VERSION = 12;
 import { getActiveCommanderEffects, type Commander } from "./commander";
 import { canUnlockBuilding, getActiveSynergies, describeActiveSynergies } from "./building-tree";
 import { applyUnlockEffectsToState } from "./meta-progression";
-import { earnShards } from "./profile-currency";
+import { earnShards, applyRewardShards } from "./profile-currency";
 export const PROFILE_VERSION = 2;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
@@ -3405,13 +3405,26 @@ export function applyCombatSummaryProfileReward(
   summary: CombatSummary,
   day: number,
 ): DeadGridProfile {
-  // Route the shard award through the currency ledger earn helper so the
-  // earn formula stays clamped/non-negative and centralized (US-002).
-  const earned = earnShards(profile, summary.profileReward);
+  const hasOutcome = summary.status !== null && summary.status !== undefined;
+  
+  let updatedProfile: DeadGridProfile;
+  
+  if (hasOutcome) {
+    // Use applyRewardShards to honor first-loss bonus (double shards on first defeat)
+    updatedProfile = applyRewardShards(
+      profile,
+      summary.profileReward,
+      summary.status as NonNullable<DeadGridProfile["lastRunOutcome"]>,
+    );
+  } else {
+    // Fallback to simple earn (edge case: no outcome)
+    updatedProfile = earnShards(profile, summary.profileReward);
+  }
+  
   return hydrateLoadedProfile({
-    ...earned,
-    lifetimeRuns: earned.lifetimeRuns + (summary.status === "defeat" ? 1 : 0),
-    highestDayReached: Math.max(earned.highestDayReached, day),
+    ...updatedProfile,
+    lifetimeRuns: updatedProfile.lifetimeRuns + (summary.status === "defeat" ? 1 : 0),
+    highestDayReached: Math.max(updatedProfile.highestDayReached, day),
     lastRunOutcome: summary.status,
   });
 }
