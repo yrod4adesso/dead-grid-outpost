@@ -22,7 +22,7 @@ export function ProfilePanel() {
     lastEarnedBlueprintShards: 0,
     lastRunOutcome: null,
     commander: null,
-    profileProgress: { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as any, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } },
+    profileProgress: { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as any, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] }, rewardChests: {} },
   }));
 
   const summary = getProfileSummary(profile);

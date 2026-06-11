@@ -28,6 +28,7 @@ const createProfile = (overrides: Partial<DeadGridProfile> = {}): DeadGridProfil
       milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
       completedChapters: [],
     },
+    rewardChests: {},
   },
   ...overrides,
 });
@@ -84,6 +85,7 @@ describe("Profile Data Structure (US-001)", () => {
             milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
             completedChapters: [],
           },
+          rewardChests: {},
         },
       } as unknown as DeadGridProfile;
 
@@ -107,6 +109,7 @@ describe("Profile Data Structure (US-001)", () => {
             milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
             completedChapters: [],
           },
+          rewardChests: {},
         },
         blueprintShards: 10,
       });

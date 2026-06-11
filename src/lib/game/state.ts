@@ -217,6 +217,7 @@ export type ProfileProgress = {
     milestoneProgress: Record<ChapterId, number>; // index of highest reached milestone (0-based)
     completedChapters: ChapterId[];
   };
+  rewardChests: Record<string, boolean>;
 };
 
 export type DeadGridProfile = {
@@ -773,7 +774,7 @@ export const DEFAULT_GAME_PROFILE: DeadGridProfile = {
   lastEarnedBlueprintShards: 0,
   lastRunOutcome: null,
   commander: null,
-  profileProgress: { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } },
+  profileProgress: { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] }, rewardChests: {} },
 };
 
 export function createLandingGameState(): DeadGridState {
@@ -842,7 +843,7 @@ export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile 
 
   // PROFILE_VERSION migration: add profileProgress for v2
   if (profile.version < 2 && profile.version != null) {
-    base.profileProgress = { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } };
+    base.profileProgress = { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] }, rewardChests: {} };
     base.version = 2;
   }
 
@@ -855,11 +856,22 @@ export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile 
         completedChapters: [],
       };
     }
+    if (!base.profileProgress.rewardChests) {
+      base.profileProgress.rewardChests = {};
+    }
     base.version = 3;
   }
 
   if (!base.profileProgress) {
-    base.profileProgress = { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } };
+    base.profileProgress = {
+      firstLossRewardClaimed: false,
+      chapterProgress: {
+        currentChapter: "zone_alpha" as ChapterId,
+        milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+        completedChapters: [],
+      },
+      rewardChests: {},
+    };
   }
 
   return base;
