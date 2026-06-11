@@ -1,9 +1,10 @@
 export const GAME_VERSION = 12;
+import type { ChapterId } from "./chapter";
 import { getActiveCommanderEffects, type Commander } from "./commander";
 import { canUnlockBuilding, getActiveSynergies, describeActiveSynergies } from "./building-tree";
 import { applyUnlockEffectsToState } from "./meta-progression";
 import { earnShards, applyRewardShards } from "./profile-currency";
-export const PROFILE_VERSION = 2;
+export const PROFILE_VERSION = 3;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -211,6 +212,11 @@ export type CommanderData = {
 
 export type ProfileProgress = {
   firstLossRewardClaimed: boolean;
+  chapterProgress: {
+    currentChapter: ChapterId;
+    milestoneProgress: Record<ChapterId, number>; // index of highest reached milestone (0-based)
+    completedChapters: ChapterId[];
+  };
 };
 
 export type DeadGridProfile = {
@@ -767,7 +773,7 @@ export const DEFAULT_GAME_PROFILE: DeadGridProfile = {
   lastEarnedBlueprintShards: 0,
   lastRunOutcome: null,
   commander: null,
-  profileProgress: { firstLossRewardClaimed: false },
+  profileProgress: { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } },
 };
 
 export function createLandingGameState(): DeadGridState {
@@ -826,6 +832,7 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
   });
 }
 
+
 export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile {
   const base = {
     ...structuredClone(DEFAULT_GAME_PROFILE),
@@ -835,17 +842,28 @@ export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile 
 
   // PROFILE_VERSION migration: add profileProgress for v2
   if (profile.version < 2 && profile.version != null) {
-    base.profileProgress = { firstLossRewardClaimed: false };
+    base.profileProgress = { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } };
     base.version = 2;
   }
 
+  // PROFILE_VERSION migration: add chapterProgress for v3
+  if (profile.version < 3 && profile.version != null) {
+    if (!base.profileProgress.chapterProgress) {
+      base.profileProgress.chapterProgress = {
+        currentChapter: "zone_alpha",
+        milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+        completedChapters: [],
+      };
+    }
+    base.version = 3;
+  }
+
   if (!base.profileProgress) {
-    base.profileProgress = { firstLossRewardClaimed: false };
+    base.profileProgress = { firstLossRewardClaimed: false, chapterProgress: { currentChapter: "zone_alpha" as ChapterId, milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 }, completedChapters: [] } };
   }
 
   return base;
 }
-
 export function toggleMissionTeamMember(state: DeadGridState, survivorId: string): DeadGridState {
   const survivor = state.survivors.find((entry) => entry.id === survivorId);
 

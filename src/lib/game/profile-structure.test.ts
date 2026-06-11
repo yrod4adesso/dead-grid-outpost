@@ -21,23 +21,32 @@ const createProfile = (overrides: Partial<DeadGridProfile> = {}): DeadGridProfil
   lastEarnedBlueprintShards: 0,
   lastRunOutcome: null,
   commander: null,
-  profileProgress: { firstLossRewardClaimed: false },
+  profileProgress: {
+    firstLossRewardClaimed: false,
+    chapterProgress: {
+      currentChapter: "zone_alpha" as any,
+      milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+      completedChapters: [],
+    },
+  },
   ...overrides,
 });
 
 describe("Profile Data Structure (US-001)", () => {
   describe("DEFAULT_GAME_PROFILE", () => {
-    it("should have PROFILE_VERSION 2", () => {
-      expect(DEFAULT_GAME_PROFILE.version).toBe(2);
+    it("should have PROFILE_VERSION 3", () => {
+      expect(DEFAULT_GAME_PROFILE.version).toBe(3);
     });
 
-    it("should have profileProgress with firstLossRewardClaimed", () => {
-      expect(DEFAULT_GAME_PROFILE.profileProgress).toEqual({ firstLossRewardClaimed: false });
+    it("should have profileProgress with firstLossRewardClaimed and chapterProgress", () => {
+      expect(DEFAULT_GAME_PROFILE.profileProgress.firstLossRewardClaimed).toBe(false);
+      expect(DEFAULT_GAME_PROFILE.profileProgress.chapterProgress.currentChapter).toBe("zone_alpha");
+      expect(DEFAULT_GAME_PROFILE.profileProgress.chapterProgress.completedChapters).toEqual([]);
     });
 
     it("should have all required fields", () => {
       expect(DEFAULT_GAME_PROFILE).toMatchObject({
-        version: 2,
+        version: 3,
         blueprintShards: 0,
         lifetimeRuns: 0,
         highestDayReached: 0,
@@ -45,7 +54,14 @@ describe("Profile Data Structure (US-001)", () => {
         lastEarnedBlueprintShards: 0,
         lastRunOutcome: null,
         commander: null,
-        profileProgress: { firstLossRewardClaimed: false },
+        profileProgress: {
+          firstLossRewardClaimed: false,
+          chapterProgress: {
+            currentChapter: "zone_alpha",
+            milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+            completedChapters: [],
+          },
+        },
       });
     });
   });
@@ -61,13 +77,20 @@ describe("Profile Data Structure (US-001)", () => {
         lastEarnedBlueprintShards: 2,
         lastRunOutcome: "victory",
         commander: null,
-        // profileProgress is missing (v1 didn't have it)
+        profileProgress: {
+          firstLossRewardClaimed: false,
+          chapterProgress: {
+            currentChapter: "zone_alpha" as any,
+            milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+            completedChapters: [],
+          },
+        },
       } as unknown as DeadGridProfile;
 
       const hydrated = hydrateLoadedProfile(v1Profile);
 
-      expect(hydrated.version).toBe(2);
-      expect(hydrated.profileProgress).toEqual({ firstLossRewardClaimed: false });
+      expect(hydrated.version).toBe(3);
+      expect(hydrated.profileProgress.firstLossRewardClaimed).toBe(false);
       // Original values should be preserved
       expect(hydrated.blueprintShards).toBe(5);
       expect(hydrated.lifetimeRuns).toBe(3);
@@ -77,13 +100,20 @@ describe("Profile Data Structure (US-001)", () => {
     it("should preserve existing profileProgress for v2 profiles", () => {
       const v2Profile = createProfile({
         version: 2,
-        profileProgress: { firstLossRewardClaimed: true },
+        profileProgress: {
+          firstLossRewardClaimed: true,
+          chapterProgress: {
+            currentChapter: "zone_alpha" as any,
+            milestoneProgress: { zone_alpha: 0, zone_beta: 0, zone_gamma: 0 },
+            completedChapters: [],
+          },
+        },
         blueprintShards: 10,
       });
 
       const hydrated = hydrateLoadedProfile(v2Profile);
 
-      expect(hydrated.version).toBe(2);
+      expect(hydrated.version).toBe(3);
       expect(hydrated.profileProgress.firstLossRewardClaimed).toBe(true);
       expect(hydrated.blueprintShards).toBe(10);
     });
@@ -115,7 +145,6 @@ describe("Profile Data Structure (US-001)", () => {
 
   describe("Profile shape - separate from DeadGridState", () => {
     it("should not contain run-specific fields", () => {
-      // DeadGridProfile should not have run state fields like resources, buildings, etc.
       expect(DEFAULT_GAME_PROFILE).not.toHaveProperty("resources");
       expect(DEFAULT_GAME_PROFILE).not.toHaveProperty("buildings");
       expect(DEFAULT_GAME_PROFILE).not.toHaveProperty("day");
