@@ -22,6 +22,7 @@ export function ProfilePanel() {
     lastEarnedBlueprintShards: 0,
     lastRunOutcome: null,
     commander: null,
+    profileProgress: { firstLossRewardClaimed: false },
   }));
 
   const summary = getProfileSummary(profile);

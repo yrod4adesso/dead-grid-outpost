@@ -3,7 +3,7 @@ import { getActiveCommanderEffects, type Commander } from "./commander";
 import { canUnlockBuilding, getActiveSynergies, describeActiveSynergies } from "./building-tree";
 import { applyUnlockEffectsToState } from "./meta-progression";
 import { earnShards } from "./profile-currency";
-export const PROFILE_VERSION = 1;
+export const PROFILE_VERSION = 2;
 
 export type ResourceId = "food" | "scrap" | "medicine" | "ammo";
 export type GamePhase = "outpost" | "combat" | "summary" | "ended";
@@ -209,6 +209,10 @@ export type CommanderData = {
   unlockedPerks: string[];
 };
 
+export type ProfileProgress = {
+  firstLossRewardClaimed: boolean;
+};
+
 export type DeadGridProfile = {
   version: number;
   blueprintShards: number;
@@ -218,6 +222,7 @@ export type DeadGridProfile = {
   lastEarnedBlueprintShards: number;
   lastRunOutcome: CombatSummary["status"] | null;
   commander: CommanderData | null;
+  profileProgress: ProfileProgress;
 };
 
 export type BuildingStats = {
@@ -762,6 +767,7 @@ export const DEFAULT_GAME_PROFILE: DeadGridProfile = {
   lastEarnedBlueprintShards: 0,
   lastRunOutcome: null,
   commander: null,
+  profileProgress: { firstLossRewardClaimed: false },
 };
 
 export function createLandingGameState(): DeadGridState {
@@ -821,11 +827,23 @@ export function hydrateLoadedState(state: DeadGridState): DeadGridState {
 }
 
 export function hydrateLoadedProfile(profile: DeadGridProfile): DeadGridProfile {
-  return {
+  const base = {
     ...structuredClone(DEFAULT_GAME_PROFILE),
     ...profile,
     unlockedNodes: profile.unlockedNodes ?? [],
   };
+
+  // PROFILE_VERSION migration: add profileProgress for v2
+  if (profile.version < 2 && profile.version != null) {
+    base.profileProgress = { firstLossRewardClaimed: false };
+    base.version = 2;
+  }
+
+  if (!base.profileProgress) {
+    base.profileProgress = { firstLossRewardClaimed: false };
+  }
+
+  return base;
 }
 
 export function toggleMissionTeamMember(state: DeadGridState, survivorId: string): DeadGridState {
